@@ -11,7 +11,7 @@ Start **only** the isolated test infrastructure and execute the test suite **ins
 1. Bring up the test stack and build the dev image if needed:
    ```bash
    make install          # once: docker compose … build dev
-   make setup ENV=test   # docker compose -f docker-compose.test.yml up -d
+   make setup ENV=test   # test stack + install_git_hooks.sh (copy hooks, best-effort)
    ```
 2. Run tests (pytest never runs on the host in the supported path):
    ```bash

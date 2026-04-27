@@ -87,8 +87,6 @@ dev = [
     "bandit>=1.9.4",
     "detect-secrets>=1.5.0",
 
-    # ── DX ────────────────────────────────────────────────────────
-    "pre-commit>=4.6.0",
 ]
 
 [tool.setuptools.packages.find]

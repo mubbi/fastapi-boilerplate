@@ -110,7 +110,7 @@ If any of these fires, the reviewer returns `Verdict: BLOCK + ESCALATE` and list
 
 ## When to run
 
-- Before opening any PR that touches: `app/api/**`, `app/core/security.py`, `app/core/middleware.py`, `app/core/config.py`, `app/integrations/**`, `app/repositories/**`, `Dockerfile`, `docker-compose*.yml`, `render.yaml`, `bitbucket-pipelines.yml`, dependency manifests / lockfiles (`pyproject.toml`, `uv.lock`, `requirements*.txt`, etc.), `.env.example`, `.pre-commit-config.yaml`.
+- Before opening any PR that touches: `app/api/**`, `app/core/security.py`, `app/core/middleware.py`, `app/core/config.py`, `app/integrations/**`, `app/repositories/**`, `Dockerfile`, `docker-compose*.yml`, `render.yaml`, `bitbucket-pipelines.yml`, `docker/.githooks/`, dependency manifests / lockfiles (`pyproject.toml`, `uv.lock`, `requirements*.txt`, etc.), `.env.example`.
 - Whenever you add a new dependency (run with `--deps`).
 - Whenever you change auth, session, password, JWT, CSRF, or rate-limit logic.
 - After dependency upgrades (CVE delta).

@@ -1,5 +1,5 @@
 ---
-description: Ruff, Black, mypy, pre-commit, conventional commits — the quality bar enforced in CI.
+description: Ruff, Black, mypy, custom Git hooks, conventional commits — the quality bar enforced in CI.
 alwaysApply: true
 ---
 
@@ -10,7 +10,7 @@ Read first: `architecture-principles.mdc` and `project-structure.mdc`; this rule
 ## Ruff (0.15.12+)
 
 - Selected rules: `E,F,I,B,UP,SIM,N,RUF,ASYNC,S,PL,PT,TID,TCH`.
-- `--fix` allowed in pre-commit; CI runs `ruff check` + `ruff format --check`.
+- `--fix` via `make format` locally; CI runs `ruff check` + `ruff format --check`.
 - Use `# noqa: <code>` only with a one-line justification comment.
 
 ## Black (26.3.1+)
@@ -25,19 +25,12 @@ Read first: `architecture-principles.mdc` and `project-structure.mdc`; this rule
 - No `Any` without a `# type: ignore[<code>]` comment with reason, or an explicit `cast(...)`.
 - Use the SQLAlchemy plugin (`plugins = ["sqlalchemy.ext.mypy.plugin"]`) and the Pydantic mypy plugin where helpful.
 
-## Pre-commit (4.6.0+)
+## Git hooks (host stubs + GNU `make`, no `pre-commit` package)
 
-Hooks (must all pass before commit):
-
-- `ruff` (check + format)
-- `black --check`
-- `mypy app`
-- `bandit -q -r app`
-- `detect-secrets`
-- `end-of-file-fixer`, `trailing-whitespace`
-- `check-yaml`, `check-toml`, `check-merge-conflict`, `check-added-large-files`
-
-Install once via `make precommit-install`.
+- **Source:** `docker/.githooks/pre-commit` and `docker/.githooks/pre-push` (tracked in the repo).
+- **Install:** `scripts/install_git_hooks.sh` copies templates → `.git/hooks/` (copy-only). **`make setup ENV=local|test`** invokes it best-effort; **`make install-git-hooks`** (`precommit-install`) does the same copy with required success (**`make install`** separately builds the dev image for lint/tests).
+- **Commit hook:** runs **`make git-hooks-commit`** (lint + **`make check-env`**).
+- **Pre-push hook:** runs **`make git-hooks-push`** (same as **`make ci-local`**: lint, audit, check-env, i18n-check, test), or **`GIT_HOOKS_PUSH_QUICK=1`** for **`git-hooks-push-quick`** (no pytest).
 
 ## Security scanning (CI gates)
 
@@ -61,7 +54,7 @@ Install once via `make precommit-install`.
 - One concern per PR. Migrations + tests live in the same PR as the model change.
 - PR description includes: change summary, motivation, migration note, rollback plan, observability impact.
 - Update `.env.example` when adding env vars (CI drift check fails otherwise).
-- Update **gettext catalogs** when adding user-visible strings. Use the workflow in `i18n-l10n.mdc`; CI runs `make i18n-check`.
+- **Gettext catalogs** when adding user-visible strings. Use the workflow in `i18n-l10n.mdc`; CI runs `make i18n-check`.
 
 ## Banned in PRs
 
@@ -75,8 +68,7 @@ Install once via `make precommit-install`.
 
 ## Review gates
 
-Two AI review passes run before merge; branch protection still requires at least one human approval per spec §16:
-
+- Two AI review passes before merge; branch protection still requires at least one human approval per spec §16:
 - **Code review** (architecture, DI, Pydantic, SQLAlchemy, async, typing, i18n, testing): see `code-review.mdc`. Run via `/review-code` (Claude Code) or invoke `@code-review` rule in Cursor.
 - **Security review** (authn/z, secrets, SQLi/SSRF/IDOR, CORS, rate limit, containers, supply chain, audit logging, PII): see `security-review.mdc`. Run via `/review-security` or `@security-review`.
 

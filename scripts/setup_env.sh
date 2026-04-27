@@ -2,6 +2,8 @@
 # Single entry point for environment setup. Called by `make setup ENV=...`.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ENV="${1:-local}"
 
 case "${ENV}" in
@@ -18,6 +20,7 @@ case "${ENV}" in
     done
     docker compose -f docker-compose.yml exec api alembic upgrade head
     echo "[setup] Local stack is up. API: http://localhost:8000  MailHog: http://localhost:8025"
+    bash "${SCRIPT_DIR}/install_git_hooks.sh"
     ;;
 
   test)
@@ -28,6 +31,7 @@ case "${ENV}" in
       sleep 1
     done
     echo "[setup] Test infra ready. Run \`make test\` (pytest runs in the dev Docker image)."
+    bash "${SCRIPT_DIR}/install_git_hooks.sh"
     ;;
 
   production)

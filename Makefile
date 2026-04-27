@@ -7,7 +7,8 @@
 #   make setup ENV=production  # entrypoint hint for Render
 #
 # Production workloads run the image from docker/Dockerfile; quality gates use Dockerfile.dev.
-# Pre-commit hooks still execute on the host (Git); install once with: make precommit-install
+# Git hooks: docker/.githooks → .git/hooks (copy-only via scripts/install_git_hooks.sh;
+# also runs at end of make setup ENV=local|test). Hooks invoke Make → Docker when executed.
 # ──────────────────────────────────────────────────────────────────
 
 .SHELLFLAGS = -eu -o pipefail -c
@@ -20,6 +21,8 @@ COMPOSE_TEST  := docker compose -f docker-compose.test.yml
 # dev image: all extras from uv.lock, repo mounted at /workspace
 DEV  := $(COMPOSE_TEST) run --rm
 DEV0 := $(COMPOSE_TEST) run --rm --no-deps dev
+# $(1) = extra pytest arguments (e.g. -m unit). Empty runs the full suite.
+dev-pytest = $(DEV) dev sh -ec 'APP_ENV=test pytest$(if $(strip $(1)), $(strip $(1)))'
 
 .DEFAULT_GOAL := help
 
@@ -31,16 +34,18 @@ help:
 # ── Environment bootstrap ──────────────────────────────────────────
 
 .PHONY: setup
-setup: ## Bootstrap an environment (ENV=local|test|production)
+setup: ## Bootstrap an environment (ENV=local|test|production); local/test also copy Git hooks (best-effort)
 	bash scripts/setup_env.sh $(ENV)
 
 .PHONY: install
 install: ## Build the dev tool image (Dockerfile.dev; frozen uv.lock)
 	$(COMPOSE_TEST) build dev
 
-.PHONY: precommit-install
-precommit-install: ## Install git pre-commit hooks on the host (Git; not inside Docker)
-	pre-commit install
+.PHONY: install-git-hooks precommit-install
+install-git-hooks: ## Copy docker/.githooks → .git/hooks only (no Docker build). Same files as end of make setup ENV=local|test
+	INSTALL_GIT_HOOKS_REQUIRED=1 bash scripts/install_git_hooks.sh
+precommit-install: install-git-hooks ## Alias for install-git-hooks
+	@:
 
 # ── Run / serve (stack is always Docker) ──────────────────────────
 
@@ -62,9 +67,19 @@ api-shell: ## Open a shell in the api container
 	$(COMPOSE_LOCAL) exec -it api sh
 
 # ── Quality (Docker: dev service, no DB) ───────────────────────────
+# Git hooks aggregate targets here — edit `git-hooks-commit` / `git-hooks-push` to tune DX vs parity.
+
+.PHONY: git-hooks-commit
+git-hooks-commit: lint check-env ## Fast gate before commit (Git pre-commit hook)
+
+.PHONY: git-hooks-push-quick
+git-hooks-push-quick: lint audit check-env i18n-check ## Lighter pre-push (no pytest); use if GIT_HOOKS_PUSH_QUICK=1
+
+.PHONY: git-hooks-push
+git-hooks-push: ci-local ## Default pre-push: full local CI (opt out: GIT_HOOKS_PUSH_QUICK=1 or git push --no-verify)
 
 .PHONY: lint
-lint: ## Run ruff + black --check + mypy in the dev container
+lint: ## Run ruff + black --check + mypy in the dev container (also part of git-hooks-commit)
 	$(DEV0) sh -ec 'ruff check app tests && black --check app tests && mypy app'
 
 .PHONY: format
@@ -79,23 +94,23 @@ typecheck: ## mypy strict in the dev container
 
 .PHONY: test
 test: ## Run the test suite in the dev container (starts test DBs if needed)
-	$(DEV) dev sh -ec 'APP_ENV=test pytest -m "not slow"'
+	$(call dev-pytest,-m "not slow")
 
 .PHONY: test-all
 test-all: ## Run every test, including slow markers, in the dev container
-	$(DEV) dev sh -ec 'APP_ENV=test pytest'
+	$(call dev-pytest,)
 
 .PHONY: test-unit
 test-unit: ## pytest -m unit
-	$(DEV) dev sh -ec 'APP_ENV=test pytest -m unit'
+	$(call dev-pytest,-m unit)
 
 .PHONY: test-int
 test-int: ## pytest -m integration
-	$(DEV) dev sh -ec 'APP_ENV=test pytest -m integration'
+	$(call dev-pytest,-m integration)
 
 .PHONY: cov
 cov: ## Run tests with coverage in the dev container
-	$(DEV) dev sh -ec 'APP_ENV=test pytest --cov=app --cov-report=term-missing'
+	$(call dev-pytest,--cov=app --cov-report=term-missing)
 
 # ── Database / migrations (against dev DB via api service) ─────────
 
@@ -131,7 +146,7 @@ i18n-check: ## CI gate: catalogs in sync, completeness ≥ threshold
 	$(DEV0) python scripts/i18n_check.py
 
 .PHONY: check-env
-check-env: ## Validate Settings and .env.example coverage
+check-env: ## Validate Settings and .env.example coverage (Git pre-commit hook via git-hooks-commit)
 	$(DEV0) python scripts/check_env.py
 
 .PHONY: new-locale
@@ -146,7 +161,6 @@ build: ## Build the production image
 
 .PHONY: build-dev
 build-dev: install ## Alias: build the dev tool image
-	@true
 
 .PHONY: up
 up: ## Bring the local dev stack up
@@ -185,12 +199,14 @@ openapi: ## Write openapi.json (from mounted tree)
 	$(DEV0) python scripts/dump_openapi.py > openapi.json
 
 .PHONY: audit
-audit: ## Run pip-audit, bandit, and detect-secrets in the dev container
+audit: ## Run pip-audit, bandit, and detect-secrets (part of ci-local / git-hooks-push)
 	$(DEV0) sh -ec 'pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline'
 
+# PR gates: same tools as bitbucket-pipelines.yml (sequential; CI runs lint/security/i18n/check-env in parallel).
 .PHONY: ci-local
-ci-local: ## Run lint, security, i18n, then tests (same order as CI, all Docker)
-	$(MAKE) lint
-	$(MAKE) audit
-	$(MAKE) i18n-check
-	$(MAKE) test
+ci-local: ## lint → audit → check-env → i18n-check → test (same as git-hooks-push / Bitbucket default pipeline intent)
+	@$(MAKE) --no-print-directory lint
+	@$(MAKE) --no-print-directory audit
+	@$(MAKE) --no-print-directory check-env
+	@$(MAKE) --no-print-directory i18n-check
+	@$(MAKE) --no-print-directory test

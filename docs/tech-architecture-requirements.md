@@ -109,7 +109,7 @@ A reusable, opinionated FastAPI backend boilerplate that codifies the team's arc
 | Formatting | Black | 26.3.1+ | Consistent style |
 | Type Checking | mypy | 1.20.2+ | Strict mode |
 | Security scanning | pip-audit, bandit, detect-secrets | latest | CI gates |
-| Pre-commit | pre-commit | 4.6.0+ | Enforce on commit |
+| Git hooks | `docker/.githooks/` → `.git/hooks/`; **`make git-hooks-commit`** / **`make git-hooks-push`** (`GIT_HOOKS_PUSH_QUICK=1` → lighter push) | — | **`git-hooks-push`** = **`make ci-local`**; Docker via Makefile (no Python `pre-commit` package) |
 | Dependency manager | uv (preferred) or pip-tools | latest | Reproducible locks |
 | Container | Docker | 29.4.1+ | Multi-stage build |
 | Orchestration (local) | Docker Compose v2 | latest | Single-command dev env |
@@ -376,10 +376,13 @@ fastapi-boilerplate/
 │   └── contract/                    # Provider contract tests
 ├── scripts/
 │   ├── setup_env.sh                 # Invoked by `make setup` (ENV + SERVICE_ROLE branching)
+│   ├── install_git_hooks.sh         # copy-only: docker/.githooks → .git/hooks (setup + make install-git-hooks)
 │   ├── seed_dev_data.py
 │   └── healthcheck.py
 ├── docker/
 │   ├── Dockerfile                   # Multi-stage (api + worker share image)
+│   ├── Dockerfile.dev               # CI / local tooling image (`dev` compose service)
+│   ├── .githooks/                   # Git hook templates (`git-hooks-commit`; `git-hooks-push`) → copied to `.git/hooks`
 │   ├── docker-entrypoint.sh
 │   └── healthcheck.sh
 ├── .bitbucket/
@@ -400,7 +403,6 @@ fastapi-boilerplate/
 ├── .dockerignore
 ├── .editorconfig
 ├── .python-version
-├── .pre-commit-config.yaml
 ├── pyproject.toml                   # Deps + ruff + black + mypy + pytest config
 ├── uv.lock                          # (or requirements.lock) - reproducible lock
 ├── alembic.ini
@@ -979,7 +981,7 @@ CI runs steps 2 and 5 and asserts:
 13. **Mass assignment** — Pydantic schemas explicitly enumerate writable fields; never construct ORM objects from raw dicts.
 14. **TLS** — terminated at Render's load balancer; HTTP→HTTPS redirect; HSTS in production.
 15. **Dependency scanning** — `pip-audit` and `bandit` in CI; fail on high-severity CVEs.
-16. **Secret detection** — `detect-secrets` pre-commit hook + CI.
+16. **Secret detection** — `detect-secrets` in Git **pre-push** hook (Docker `dev`) + CI.
 17. **Container hardening** — non-root user, read-only root FS where possible, minimal base image, no shell tools in final stage.
 18. **Audit logging** — security-sensitive actions (login, role change, admin action) logged to a dedicated audit logger with non-redacted user ID + IP.
 19. **Data retention** — defined per data class; PII retention < 90 days unless required.
@@ -1131,10 +1133,10 @@ CI runs steps 2 and 5 and asserts:
 ## 16. Code Quality
 
 - **Black** line length 100.
-- **Ruff** rules: `E,F,I,B,UP,SIM,N,RUF,ASYNC,S,PL,PT,TID,TCH`. `--fix` allowed in pre-commit.
+- **Ruff** rules: `E,F,I,B,UP,SIM,N,RUF,ASYNC,S,PL,PT,TID,TCH`. `--fix` allowed locally (`make format`); CI runs `ruff check` + `ruff format --check`.
 - **mypy** in strict mode for `app/` (no untyped defs, no implicit Optional, `--warn-redundant-casts`, `--warn-unused-ignores`).
 - **Docstrings** — Google style; required on public APIs of services, repositories, and core modules.
-- **Pre-commit** hooks: ruff, ruff-format, black, mypy, end-of-file-fixer, trailing-whitespace, check-yaml, check-toml, check-merge-conflict, detect-secrets, check-added-large-files.
+- **Git hooks** (`docker/.githooks/` copied to `.git/hooks/`): **commit hook** runs **`make git-hooks-commit`** (lint + **`check-env`**); **pre-push hook** runs **`make git-hooks-push`** (same sequence as **`make ci-local`** — lint, audit, **`check-env`**, **`i18n-check`**, **`test`**). **`GIT_HOOKS_PUSH_QUICK=1`** runs **`git-hooks-push-quick`** (no pytest). No third-party **pre-commit** Python package or `.pre-commit-config.yaml`.
 - **Conventional Commits** for messages (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `build:`, `ci:`) — enforced via PR title check.
 - **Branching** — short-lived feature branches off `main`; squash-merge; protected `main`.
 - **Code review** — at least one approval; CODEOWNERS for sensitive paths (`app/core/`, `alembic/`, `render.yaml`).
@@ -1182,7 +1184,8 @@ make setup ENV=production SERVICE_ROLE=beat     # in Render Background Worker (C
 3. Copy `.env.example` → `.env` if missing (**local** only); never overwrite existing.
 4. **local:** `docker compose build` → up infra → wait for health → `alembic upgrade head` (dev DB) → optional seed → up `api worker beat mailhog`.
 5. **test:** ensure `.env.test` exists → `docker compose -f docker-compose.test.yml up -d` → wait for health → run **pytest inside the `dev` service** (`make test` / same in CI); document that host `pytest` is not a supported path.
-6. **production:** validate required secrets / `SERVICE_ROLE` → print the command line Render should use (no-op locally) **or** in the container entrypoint, branch on `SERVICE_ROLE` only — **application business code stays identical** across roles.
+6. **local** and **test:** after stack is ready, run `scripts/install_git_hooks.sh` (best-effort, **copy-only** — no Docker build): copy **`docker/.githooks/pre-commit`** and **`docker/.githooks/pre-push`** into **`.git/hooks/`** (executable). Installed hooks invoke **`make git-hooks-commit`** / **`make git-hooks-push`** from the repo root (**`make install`** separately builds the `dev` image for when those hooks run). **no host Python** for quality tools. Does not block setup if not a Git repo or templates missing; **`make install-git-hooks`** enforces a successful copy.
+7. **production:** validate required secrets / `SERVICE_ROLE` → print the command line Render should use (no-op locally) **or** in the container entrypoint, branch on `SERVICE_ROLE` only — **application business code stays identical** across roles.
 
 **Rule:** No developer should need to remember three different setup stories; documentation and README only advertise `make setup ENV=…`.
 
@@ -1192,16 +1195,12 @@ make setup ENV=local
 # same as: make bootstrap
 ```
 
-Steps performed for **`ENV=local`**:
+Steps performed for **`ENV=local`** (see `scripts/setup_env.sh` for the exact sequence in this repo):
 1. Verify required tools (`docker`, `docker compose`, `make`).
 2. Copy `.env.example` → `.env` if missing.
-3. `docker compose build`.
-4. `docker compose up -d postgres redis mailhog`.
-5. Wait for healthchecks.
-6. `docker compose run --rm api alembic upgrade head`.
-7. `docker compose run --rm api python scripts/seed_dev_data.py` (no-op in boilerplate; project-specific later).
-8. `docker compose up -d api worker beat`.
-9. Print accessible URLs and a quick `curl` against `/ready`.
+3. `docker compose build` and bring the stack up; wait for Postgres; `alembic upgrade head` against the dev DB.
+4. **Git hooks:** run `scripts/install_git_hooks.sh` — copy **`docker/.githooks`** → **`.git/hooks`** only; skipped if not a clone (no `.git`) or templates missing (does not fail setup).
+5. Print accessible URLs (API, MailHog).
 
 ### 17.4 Standard Make Targets (required)
 
@@ -1220,7 +1219,7 @@ make audit                             # pip-audit, bandit, detect-secrets in `d
 make check-env / make openapi          # drift + OpenAPI dump in `dev`
 make i18n-extract|update|compile|check # Babel / i18n_check in `dev`
 make new-locale LOCALE=xx              # pybabel init in `dev`
-make precommit-install                 # host Git hooks only
+make install-git-hooks / precommit-install   # copy docker/.githooks → .git/hooks only; no Docker (required success; alias)
 make ci-local                          # lint + audit + i18n-check + test (all Docker)
 make build                             # production image (docker/Dockerfile)
 make test-up / make test-down          # test compose only
@@ -1254,7 +1253,7 @@ All services share a bridge network, declare healthchecks, depend on each other 
 ### 17.7 Developer Experience
 - VS Code devcontainer config (`.devcontainer/`) optional but recommended.
 - `.editorconfig` enforces line endings, indentation, charset.
-- Pre-commit hooks are installed on the **host** with `make precommit-install` (optional); **CI and the supported quality path** use `make lint` / `make test` (Docker only).
+- **Commit / pre-push hooks:** `make setup ENV=local|test` runs `scripts/install_git_hooks.sh` (best-effort copy only). Templates: **`docker/.githooks/`** → **`.git/hooks/`**. Hooks execute **`make git-hooks-commit`** (commit) and **`make git-hooks-push`** (pre-push; mirrors **`make ci-local`**). **`make install-git-hooks`** (alias **`precommit-install`**) performs the same copy with required success — **no** **`make install`**. **CI** uses the same **Makefile**-backed commands.
 - `AGENTS.md` documents AI assistant conventions for the repo.
 - `make i18n-extract && make i18n-compile` runs as part of `make setup ENV=local` so a fresh clone has compiled `.mo` catalogs ready (idempotent; no-op when up to date).
 - README has a "5-minute quickstart" section that mentions **only** `make setup ENV=local` + a "common pitfalls" section (wrong `ENV`, pytest pointing at dev DB, missing `.mo` after editing `.po`).

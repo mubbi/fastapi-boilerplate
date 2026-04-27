@@ -8,11 +8,12 @@ Run the unified DX entrypoint for **local development**.
 
 ## Steps
 
-1. Verify prerequisites: `docker --version`, `docker compose version`, `make --version`. Do not rely on a host Python venv for the supported workflow — quality gates use **`make install`** (builds the `dev` image) and **`make lint` / `make test`**.
+1. Verify prerequisites: `docker --version`, `docker compose version`, **`make --version`** (hooks invoke **`make git-hooks-commit`** / **`make git-hooks-push`**). **Git hooks:** `docker/.githooks/` → **`.git/hooks`** via **`install_git_hooks.sh`** (no **`pre-commit`** Python package).
 2. Run:
    ```bash
    make setup ENV=local
    ```
+   This also runs `scripts/install_git_hooks.sh` (best-effort, copy-only). If hooks were skipped, run **`make install-git-hooks`**. Build the dev image with **`make install`** before the first commit that runs hook checks.
 3. Confirm services are healthy:
    ```bash
    curl -s http://localhost:8000/ready | jq
@@ -27,6 +28,7 @@ Run the unified DX entrypoint for **local development**.
 - Compiled `.mo` files come from the image build and Babel; use `make i18n-compile` in the `dev` container if you need to refresh catalogs from `.po` files on disk.
 - Optionally seeds via `scripts/seed_dev_data.py`.
 - Starts `api`, `worker`, `beat`.
+- Copies **`docker/.githooks/`** to **`.git/hooks/`** via `install_git_hooks.sh` — hooks run **`make git-hooks-commit`** (commit) and **`make git-hooks-push`** (pre-push; **`GIT_HOOKS_PUSH_QUICK=1`** skips pytest).
 
 ## Common pitfalls
 

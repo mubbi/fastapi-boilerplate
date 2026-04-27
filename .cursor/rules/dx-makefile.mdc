@@ -8,7 +8,7 @@ alwaysApply: false
 
 **One command** brings up a coherent environment: `make setup ENV=local|test|production`.
 
-**All supported quality and test commands** (`make lint`, `make test`, `make i18n-*`, `make audit`, …) run **inside Docker** using the `dev` service in `docker-compose.test.yml`, built from `docker/Dockerfile.dev` (locked `uv.lock` with all extras). The only common exception is **`make precommit-install`**, which registers Git hooks on the **host** so Git can invoke them.
+**All supported quality and test commands** (`make lint`, `make test`, `make i18n-*`, `make audit`, …) run **inside Docker** using the `dev` service in `docker-compose.test.yml`, built from `docker/Dockerfile.dev` (locked `uv.lock` with all extras). **Git hooks:** **`docker/.githooks/`** → **`.git/hooks/`** via **`install_git_hooks.sh`**; hooks run **`make git-hooks-commit`** (commit) and **`make git-hooks-push`** (pre-push = **`ci-local`**, or **`GIT_HOOKS_PUSH_QUICK=1`** for lint/audit/check-env/i18n only). No Python **`pre-commit`** package. End of **`make setup ENV=local|test`** (best-effort hook copy); **`make install-git-hooks`** copies hooks only — no Docker — and enforces success when run alone (alias **`precommit-install`**).
 
 ## Behavior matrix
 
@@ -40,23 +40,23 @@ alwaysApply: false
 | `make migrate` / `make migration` / `make downgrade` | `alembic` **via the running `api` container** against the dev DB. |
 | `make test` / `test-all` / `test-unit` / `test-int` / `cov` | `docker compose -f docker-compose.test.yml run --rm dev …` (pytest in container). |
 | `make lint` / `make format` / `make typecheck` | Ruff + Black + mypy in `dev` with `--no-deps`. |
-| `make precommit-install` | `pre-commit install` on the **host** (Git). |
+| `make install-git-hooks` / `precommit-install` | `install_git_hooks.sh`: copy `docker/.githooks` → `.git/hooks` only (must succeed). |
 | `make openapi` | `scripts/dump_openapi.py` in `dev` → `openapi.json` on the host. |
 | `make check-env` | `scripts/check_env.py` in `dev`. |
 | `make audit` | `pip-audit`, `bandit`, `detect-secrets` in `dev`. |
 | `make i18n-extract` / `i18n-update` / `i18n-compile` / `i18n-check` | Babel / `i18n_check.py` in `dev`. |
 | `make new-locale` | `pybabel init` in `dev`. |
-| `make ci-local` | Chains Docker-backed targets (lint → audit → i18n-check → test). |
+| `make ci-local` | Chains Docker-backed targets (lint → audit → check-env → i18n-check → test). |
 
 ## scripts/setup_env.sh (canonical contract)
 
-- **`local`:** `docker compose up -d --build` for the dev stack, wait for Postgres, `docker compose exec api alembic upgrade head`.
-- **`test`:** `docker compose -f docker-compose.test.yml up -d`, wait for `postgres_test` — print hint to run `make test` (pytest in `dev` image).
+- **`local`:** `docker compose up -d --build` for the dev stack, wait for Postgres, `docker compose exec api alembic upgrade head`, then `scripts/install_git_hooks.sh` (best-effort).
+- **`test`:** `docker compose -f docker-compose.test.yml up -d`, wait for `postgres_test`, `scripts/install_git_hooks.sh` (best-effort) — print hint to run `make test` (pytest in `dev` image).
 - **`production`:** print-only / entrypoint contract for Render.
 
 ## DX expectations
 
-- Fresh `git clone` → `make setup ENV=local` → working API in **< 5 minutes** (Docker required).
+- Fresh `git clone` → `make setup ENV=local` → working API in **< 5 minutes** (Docker + **GNU Make** required for hook install). **Git hooks** run **`git-hooks-commit`** / **`git-hooks-push`**; templates in **`docker/.githooks/`** (`make install-git-hooks` to retry). No **`pre-commit`** package.
 - Adding a new env var: update `Settings` + `.env.example` + (if test-relevant) `.env.test` in the same PR. `make check-env` fails on drift.
 - VS Code may use a local interpreter for Pylance; run **`make lint`** / **`make test`** before push for real gates.
 

@@ -1,6 +1,6 @@
 ---
 description: Security reviewer rubric — authn/z, secrets, SQLi/SSRF/IDOR, container hardening, dependency CVEs, supply chain, audit logging, GDPR. Apply alongside code-review.mdc.
-globs: app/**/*.py,docker/**/*,Dockerfile,docker-compose*.yml,bitbucket-pipelines.yml,render.yaml,alembic/**/*,pyproject.toml,uv.lock,.env.example,.pre-commit-config.yaml
+globs: app/**/*.py,docker/**/*,Dockerfile,docker-compose*.yml,bitbucket-pipelines.yml,render.yaml,alembic/**/*,pyproject.toml,uv.lock,.env.example
 alwaysApply: false
 ---
 
@@ -169,7 +169,7 @@ If clean: `Security review: clean. Verdict: APPROVE.`
 - [ ] `uv.lock` (or equivalent) committed and frozen in CI (`uv sync --frozen`).
 - [ ] `pip-audit` runs in CI; **fail on High** CVEs.
 - [ ] `bandit -r app` runs in CI.
-- [ ] `detect-secrets` pre-commit + CI; baseline does not mask new findings.
+- [ ] `detect-secrets` in Git pre-push hook (Docker) + CI; baseline does not mask new findings.
 - [ ] Image scanning (Trivy / Grype) in CI; fail on High in app deps and base.
 - [ ] No new top-level dependency without ADR + spec §2 update + license check (no GPL/AGPL leaking into proprietary code).
 - [ ] Pinned major + minor for direct deps; transitive resolved from lockfile.

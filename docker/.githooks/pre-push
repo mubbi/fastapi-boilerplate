@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Copied to .git/hooks/pre-push by scripts/install_git_hooks.sh / make setup.
+# Default: make git-hooks-push = same steps as make ci-local (lint, audit, check-env, i18n-check, test).
+# Faster push (no pytest): GIT_HOOKS_PUSH_QUICK=1 git push
+# Skip hook: git push --no-verify
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+if [ -n "${GIT_HOOKS_PUSH_QUICK:-}" ] && [ "${GIT_HOOKS_PUSH_QUICK}" != "0" ]; then
+  exec make git-hooks-push-quick
+fi
+exec make git-hooks-push

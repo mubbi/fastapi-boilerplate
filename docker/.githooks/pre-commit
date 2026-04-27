@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Copied to .git/hooks/pre-commit by scripts/install_git_hooks.sh / make setup.
+# Delegates to the Makefile (Docker dev image): make git-hooks-commit = lint + check-env.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+exec make git-hooks-commit

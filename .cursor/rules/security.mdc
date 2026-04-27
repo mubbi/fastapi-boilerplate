@@ -78,7 +78,7 @@ alwaysApply: false
 
 - `pip-audit` in CI — fail on **High** CVEs.
 - `bandit -r app` in CI.
-- `detect-secrets` pre-commit + CI.
+- `detect-secrets` in Git pre-push hook (Docker `dev`) + CI.
 - Container scan (`trivy` or Render built-in) — fail on **High**.
 
 ## Container hardening

@@ -35,8 +35,9 @@ tests/
   seeders/           # Composed scenarios using factories
   fakes/             # In-memory Protocol implementations
   unit/  integration/  api/  contract/
+scripts/             # `setup_env.sh` (`make setup`), `install_git_hooks.sh` (copy `docker/.githooks` → `.git/hooks`; hooks call `git-hooks-commit` / `git-hooks-push`)
+docker/              # Dockerfile, Dockerfile.dev, `.githooks/` (→ `.git/hooks`; `make git-hooks-commit` / `git-hooks-push`), entrypoint, healthcheck
 alembic/             # Migrations
-docker/              # Dockerfile (runtime), Dockerfile.dev (lint/tests), entrypoint, healthcheck
 babel.cfg            # Babel extraction config (Python + Jinja2)
 docs/
   tech-architecture-requirements.md   # Authoritative spec

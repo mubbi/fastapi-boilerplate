@@ -37,7 +37,6 @@ Thumbs.db
 # Tooling & CI (not needed in production build context)
 .editorconfig
 .python-version
-.pre-commit-config.yaml
 .secrets.baseline
 bandit.json
 junit.xml

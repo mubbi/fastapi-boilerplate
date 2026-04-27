@@ -24,7 +24,8 @@ Production-grade FastAPI backend boilerplate with a strict layered architecture,
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2
-- [GNU Make](https://www.gnu.org/software/make/) (Git Bash / WSL on Windows)
+- [GNU Make](https://www.gnu.org/software/make/) (Git Bash / WSL on Windows) — Git hooks call **`make git-hooks-commit`** / **`make git-hooks-push`**
+- **Git hooks:** templates in **`docker/.githooks/`** are copied to **`.git/hooks/`** by **`scripts/install_git_hooks.sh`** (end of **`make setup ENV=local|test`**, best-effort). **Pre-commit** runs **`make git-hooks-commit`** (lint + `check-env`). **Pre-push** runs **`make git-hooks-push`** (same sequence as **`make ci-local`**: lint, audit, `check-env`, `i18n-check`, test). For a faster push without pytest, use **`GIT_HOOKS_PUSH_QUICK=1 git push`**. The **Makefile** runs tools in Docker. No third-party **`pre-commit`** package, no host **uv**. If hooks were skipped, run **`make install-git-hooks`** (alias **`precommit-install`**); **`make install`** builds the dev image separately when you run lint/tests.
 
 > Optional: a local Python 3.14+ install is only for IDE / editor tooling. The supported path for `pytest`, `ruff`, `mypy`, and Babel is always the **dev** container: `make install` builds it; `make` targets run inside it.
 
@@ -32,6 +33,7 @@ Production-grade FastAPI backend boilerplate with a strict layered architecture,
 
 ```bash
 # 1) Full dev stack: Postgres, Redis, MailHog, API, worker, Beat
+#    (also copies docker/.githooks → .git/hooks via install_git_hooks.sh)
 make setup ENV=local
 
 # 2) Open the app
@@ -74,7 +76,7 @@ app/
   templates/email/   # Per-template, per-locale Jinja2 emails
   utils/             # Pure helpers
 alembic/             # Migrations
-docker/              # Dockerfile, Dockerfile.dev, entrypoint, healthcheck
+docker/              # Dockerfile, Dockerfile.dev, .githooks/, entrypoint, healthcheck
 docs/                # Spec, ADRs, runbooks
 tests/               # unit, integration, api, contract + factories/seeders/fakes
 ```
@@ -99,13 +101,14 @@ tests/               # unit, integration, api, contract + factories/seeders/fake
 |------|--------|
 | Build dev image (linters, pytest, Babel) | `make install` |
 | Local stack | `make setup ENV=local` / `make up` / `make down` |
+| Git hooks (copy `docker/.githooks` → `.git/hooks`) | `make install-git-hooks` (copy-only; also runs at end of `make setup ENV=local|test`) |
 | Tests | `make test`, `make test-all`, `make cov` |
 | Migrations (dev DB, `api` service must be up) | `make migrate`, `make migration MSG="…"`, `make downgrade` |
 | i18n | `make i18n-extract`, `make i18n-update`, `make i18n-compile`, `make i18n-check` |
 | Security | `make audit` |
 | Prod image | `make build` |
 
-`make precommit-install` is the one exception: Git hooks run on your machine so the hook manager can read `.git`.
+Hook **templates** in **`docker/.githooks/`** invoke **`make git-hooks-commit`** after `git commit`, and **`make git-hooks-push`** before `git push` (aligned with **`make ci-local`**). **`scripts/install_git_hooks.sh`** copies them to **`.git/hooks/`** at the end of **`make setup ENV=local|test`** (best-effort), or run **`make install-git-hooks`** alone (copy-only). **`make install`** builds the dev image — needed before hooks can run **`make`** targets that invoke Docker.
 
 ## Deploy
 
