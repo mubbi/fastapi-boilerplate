@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -46,11 +47,11 @@ def register_rate_limiter(app: FastAPI, limiter: Limiter) -> None:
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
 
-    async def _handler(request: Request, exc: Exception) -> object:
-        from fastapi.responses import JSONResponse
-
+    async def _handler(request: Request, exc: Exception) -> JSONResponse:
         from app.core.constants import HEADER_RETRY_AFTER
 
+        if not isinstance(exc, RateLimitExceeded):
+            raise exc
         retry_after = getattr(exc, "retry_after", None)
         headers = {HEADER_RETRY_AFTER: str(int(retry_after))} if retry_after else {}
         return JSONResponse(
@@ -65,4 +66,4 @@ def register_rate_limiter(app: FastAPI, limiter: Limiter) -> None:
             headers=headers,
         )
 
-    app.add_exception_handler(RateLimitExceeded, _handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RateLimitExceeded, _handler)

@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.core.config import Settings
@@ -45,7 +46,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     ``locale`` to contextvars after that resolution.
     """
 
-    def __init__(self, app: FastAPI, *, app_version: str) -> None:
+    def __init__(self, app: ASGIApp, *, app_version: str) -> None:
         super().__init__(app)
         self._app_version = app_version
 
@@ -100,7 +101,7 @@ class LocaleMiddleware(BaseHTTPMiddleware):
     Priority: query param → authenticated user pref → ``Accept-Language`` → default.
     """
 
-    def __init__(self, app: FastAPI, *, settings: Settings) -> None:
+    def __init__(self, app: ASGIApp, *, settings: Settings) -> None:
         super().__init__(app)
         self._settings = settings
 
@@ -134,7 +135,7 @@ class LocaleMiddleware(BaseHTTPMiddleware):
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Set defensible security headers on every response."""
 
-    def __init__(self, app: FastAPI, *, is_production: bool) -> None:
+    def __init__(self, app: ASGIApp, *, is_production: bool) -> None:
         super().__init__(app)
         self._is_production = is_production
 
@@ -193,12 +194,12 @@ def register_middlewares(app: FastAPI, *, settings: Settings) -> None:
             HEADER_CONTENT_LANGUAGE,
         ],
     )
-    app.add_middleware(LocaleMiddleware, settings=settings)  # type: ignore[arg-type]
+    app.add_middleware(LocaleMiddleware, settings=settings)
     app.add_middleware(
-        SecurityHeadersMiddleware,  # type: ignore[arg-type]
+        SecurityHeadersMiddleware,
         is_production=settings.is_production,
     )
     app.add_middleware(
-        RequestContextMiddleware,  # type: ignore[arg-type]
+        RequestContextMiddleware,
         app_version=settings.app_version,
     )

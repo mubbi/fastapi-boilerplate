@@ -40,6 +40,7 @@ dependencies = [
 
     # ── i18n / l10n ───────────────────────────────────────────────
     "babel>=2.16.0",
+    "uuid7>=0.1.0",
 
     # ── Security ──────────────────────────────────────────────────
     "python-jose[cryptography]>=3.3.0",
@@ -78,6 +79,7 @@ dev = [
     "ruff>=0.15.12",
     "black>=26.3.1",
     "mypy>=1.20.2",
+    "celery-types>=0.20.0",
     "types-passlib",
 
     # ── Security scanning ─────────────────────────────────────────
@@ -150,12 +152,25 @@ warn_unused_ignores = true
 warn_unreachable = true
 disallow_untyped_defs = true
 no_implicit_optional = true
+mypy_path = ["typings"]
 plugins = ["sqlalchemy.ext.mypy.plugin", "pydantic.mypy"]
 exclude = ["alembic/versions/", "app/locales/", "build/", "dist/"]
 
 [[tool.mypy.overrides]]
-module = ["passlib.*", "jose.*", "slowapi.*", "celery.*", "kombu.*", "factory.*", "freezegun.*"]
+module = ["passlib.*", "jose.*", "slowapi.*", "kombu.*", "factory.*", "freezegun.*"]
 ignore_missing_imports = true
+
+# Celery has no ``py.typed``; these modules only relax import-untyped and
+# untyped-decorator for the Celery API surface.
+[[tool.mypy.overrides]]
+module = [
+  "app.workers.beat_schedule",
+  "app.workers.celery_app",
+  "app.workers.tasks.system_tasks",
+  "app.workers.tasks.events_tasks",
+  "app.events.publisher",
+]
+disable_error_code = ["import-untyped", "untyped-decorator"]
 
 # ── Pytest ───────────────────────────────────────────────────────
 [tool.pytest.ini_options]
@@ -179,7 +194,6 @@ omit = ["app/locales/*", "alembic/*"]
 
 [tool.coverage.report]
 exclude_lines = [
-    "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "\\.\\.\\.",

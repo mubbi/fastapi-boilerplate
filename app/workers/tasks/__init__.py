@@ -1,3 +1,6 @@
 """Eagerly import task modules so Celery autodiscovery registers them."""
 
-from app.workers.tasks import events_tasks, system_tasks  # noqa: F401
+import importlib
+
+importlib.import_module("app.workers.tasks.events_tasks")
+importlib.import_module("app.workers.tasks.system_tasks")

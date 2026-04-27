@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -26,7 +27,11 @@ def get_registry() -> CollectorRegistry:
     multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
     if multiproc_dir:
         registry = CollectorRegistry()
-        multiprocess.MultiProcessCollector(registry)  # type: ignore[no-untyped-call]
+        _register_multiproc: Callable[[CollectorRegistry], object] = cast(
+            "Callable[[CollectorRegistry], object]",
+            multiprocess.MultiProcessCollector,
+        )
+        _register_multiproc(registry)
         return registry
     # Default registry already includes process + platform collectors when imported.
     from prometheus_client import REGISTRY

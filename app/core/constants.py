@@ -25,5 +25,10 @@ IDEMPOTENCY_TTL_SECONDS: Final[int] = 60 * 60 * 24
 READY_CHECK_CACHE_TTL_SECONDS: Final[float] = 5.0
 READY_CHECK_TIMEOUT_SECONDS: Final[float] = 1.0
 
+# ── Celery Beat: system.heartbeat (``crontab(minute="*/5")``) ────
+CELERY_HEARTBEAT_CRON_MINUTES: Final[int] = 5
+# Drop scheduled messages not claimed before the next tick (``celery-beat.mdc``).
+CELERY_HEARTBEAT_BEAT_EXPIRES_SECONDS: Final[int] = 270
+
 # ── Audit logger name (separate sink, never sampled) ────────────
 AUDIT_LOGGER_NAME: Final[str] = "audit"

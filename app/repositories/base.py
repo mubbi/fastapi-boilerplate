@@ -13,17 +13,18 @@ from collections.abc import Sequence
 from typing import Any, Generic, TypeVar
 from uuid import UUID
 
+from sqlalchemy import inspect as orm_inspect
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ExternalServiceError
 from app.core.logging import get_logger
-from app.db.base import Base
+from app.db.mixins import IdMixin
 
 log = get_logger(__name__)
 
-T = TypeVar("T", bound=Base)
+T = TypeVar("T", bound=IdMixin)
 
 
 # ── Base repository ──────────────────────────────────────────────
@@ -43,9 +44,11 @@ class BaseRepository(Generic[T]):
 
     async def get_by_id(self, id_: UUID, *, include_deleted: bool = False) -> T | None:
         try:
-            stmt = select(self.model).where(self.model.id == id_)  # type: ignore[attr-defined]
-            if not include_deleted and hasattr(self.model, "deleted_at"):
-                stmt = stmt.where(self.model.deleted_at.is_(None))  # type: ignore[attr-defined]
+            stmt = select(self.model).where(self.model.id == id_)
+            if not include_deleted:
+                mapper = orm_inspect(self.model)
+                if mapper is not None and mapper.has_property("deleted_at"):
+                    stmt = stmt.where(mapper.column_attrs["deleted_at"].is_(None))
             result = await self._session.execute(stmt)
             return result.scalar_one_or_none()
         except SQLAlchemyError as exc:

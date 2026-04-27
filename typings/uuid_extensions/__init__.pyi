@@ -1,0 +1,6 @@
+"""Inline stubs for the ``uuid7`` distribution (``from uuid_extensions import uuid7``)."""
+
+import uuid
+
+def uuid7(*args: object, **kwargs: object) -> uuid.UUID: ...
+def uuid7str(*args: object, **kwargs: object) -> str: ...

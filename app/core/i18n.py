@@ -19,17 +19,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
-try:
-    from babel import Locale  # noqa: F401  (re-exported for type-hint friendliness)
-    from babel.core import UnknownLocaleError  # noqa: F401
-    from babel.dates import format_datetime as babel_format_datetime
-    from babel.numbers import format_currency as babel_format_currency
-    from babel.numbers import format_decimal as babel_format_decimal
-    from babel.support import Translations
-
-    BABEL_AVAILABLE = True
-except ImportError:  # pragma: no cover - dev-time guard only
-    BABEL_AVAILABLE = False
+from babel.dates import format_datetime as babel_format_datetime
+from babel.numbers import format_currency as babel_format_currency
+from babel.numbers import format_decimal as babel_format_decimal
+from babel.support import Translations
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -98,8 +91,6 @@ class BabelTranslator:
     @lru_cache(maxsize=16)
     def _translations(self, locale: str) -> Translations:
         """Cache one ``Translations`` per locale; loaded once per process."""
-        if not BABEL_AVAILABLE:
-            return Translations()
         if not self._dir.exists():
             return Translations()
         loaded = Translations.load(
@@ -118,7 +109,7 @@ class BabelTranslator:
         loc = self._resolve(locale)
         try:
             translations = self._translations(loc)
-            translated = translations.gettext(key) if BABEL_AVAILABLE else key
+            translated = translations.gettext(key)
         except Exception:
             translated = key
         if not params:
@@ -140,11 +131,7 @@ class BabelTranslator:
         loc = self._resolve(locale)
         try:
             translations = self._translations(loc)
-            text = (
-                translations.ngettext(singular, plural, n)
-                if BABEL_AVAILABLE
-                else (singular if n == 1 else plural)
-            )
+            text = translations.ngettext(singular, plural, n)
         except Exception:
             text = singular if n == 1 else plural
         merged: dict[str, object] = {"n": n, **params}
@@ -161,8 +148,6 @@ class BabelTranslator:
         format: str = "medium",
     ) -> str:
         loc = self._resolve(locale)
-        if not BABEL_AVAILABLE:
-            return dt.isoformat()
         try:
             return babel_format_datetime(dt, format=format, locale=loc)
         except Exception:
@@ -175,8 +160,6 @@ class BabelTranslator:
         locale: str | None = None,
     ) -> str:
         loc = self._resolve(locale)
-        if not BABEL_AVAILABLE:
-            return str(value)
         try:
             return babel_format_decimal(value, locale=loc)
         except Exception:
@@ -190,8 +173,6 @@ class BabelTranslator:
         locale: str | None = None,
     ) -> str:
         loc = self._resolve(locale)
-        if not BABEL_AVAILABLE:
-            return f"{amount} {currency}"
         try:
             return babel_format_currency(amount, currency, locale=loc)
         except Exception:
@@ -339,6 +320,10 @@ def _(key: str, *, locale: str | None = None, **params: object) -> str:
     return get_translator().gettext(key, locale=locale, **params)
 
 
-def N_(key: str) -> str:  # noqa: N802 - convention for "no-op translation marker"
-    """Mark a string for extraction without translating it now."""
+def _translation_extraction_marker(key: str) -> str:
+    """Mark a string for extraction without translating it now (gettext ``N_`` pattern)."""
     return key
+
+
+# Bound to ``N_`` so xgettext-style extractors match the usual ``N_('...')`` call form.
+N_ = _translation_extraction_marker

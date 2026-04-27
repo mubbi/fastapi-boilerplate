@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from celery.schedules import crontab
 
+from app.core.constants import CELERY_HEARTBEAT_BEAT_EXPIRES_SECONDS
+
 
 def build_beat_schedule() -> dict[str, dict[str, object]]:
     """Return the ``beat_schedule`` dict consumed by Celery."""
@@ -17,6 +19,9 @@ def build_beat_schedule() -> dict[str, dict[str, object]]:
         "system.heartbeat": {
             "task": "system.heartbeat",
             "schedule": crontab(minute="*/5"),
-            "options": {"queue": "default"},
+            "options": {
+                "queue": "default",
+                "expires": CELERY_HEARTBEAT_BEAT_EXPIRES_SECONDS,
+            },
         },
     }

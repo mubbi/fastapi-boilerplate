@@ -5,6 +5,8 @@ Disabled when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is empty so local dev stays quiet.
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+
 from app.core.config import Settings
 from app.core.logging import get_logger
 
@@ -60,13 +62,13 @@ def configure_tracing(settings: Settings) -> None:
     _initialized = True
 
 
-def instrument_app(app: object) -> None:
+def instrument_app(app: FastAPI) -> None:
     """Attach FastAPI / SQLAlchemy / Redis / httpx auto-instrumentation."""
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
         FastAPIInstrumentor.instrument_app(
-            app,  # type: ignore[arg-type]
+            app,
             excluded_urls="/health,/ready,/metrics",
         )
     except Exception:

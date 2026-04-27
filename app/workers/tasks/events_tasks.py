@@ -10,13 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from celery import Task
+
 from app.core.logging import get_logger
 from app.workers.celery_app import celery_app
 
 log = get_logger(__name__)
 
 
-@celery_app.task(  # type: ignore[untyped-decorator]
+@celery_app.task(
     name="system.handle_ping_emitted",
     bind=True,
     acks_late=True,
@@ -27,7 +29,7 @@ log = get_logger(__name__)
     max_retries=3,
 )
 def handle_ping_emitted(
-    self: Any,
+    self: Task[Any, Any],
     *,
     event: dict[str, Any],
     locale: str | None = None,

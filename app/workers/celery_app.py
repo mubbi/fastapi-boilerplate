@@ -57,7 +57,7 @@ settings = get_settings()
 celery_app: Celery = _build_celery(settings)
 
 
-@setup_logging.connect  # type: ignore[untyped-decorator]
+@setup_logging.connect
 def _configure_celery_logging(*_args: object, **_kwargs: object) -> None:
     """Pipe Celery logs through the same structlog configuration."""
     configure_logging(

@@ -13,8 +13,7 @@ from typing import Protocol
 class Clock(Protocol):
     """Clock abstraction. Implementations: ``SystemClock`` (prod), ``FrozenClock`` (tests)."""
 
-    def now(self) -> datetime:  # pragma: no cover - interface
-        ...
+    def now(self) -> datetime: ...
 
 
 class SystemClock:

@@ -7,9 +7,9 @@ and exposes a graceful ``aclose``.
 from __future__ import annotations
 
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from typing import Self
+from typing import Self, cast
 
 import redis.asyncio as aioredis
 from redis.asyncio.connection import ConnectionPool
@@ -107,7 +107,8 @@ class RedisCache:
         finally:
             if acquired:
                 try:
-                    await self._client.eval(_UNLOCK_LUA, 1, key, token)  # type: ignore[misc]
+                    res = self._client.eval(_UNLOCK_LUA, 1, key, token)
+                    await cast("Awaitable[object]", res)
                 except Exception:
                     log.warning("cache.lock.release_failed", key=key)
 
