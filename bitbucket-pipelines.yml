@@ -1,0 +1,88 @@
+# Quality gates and tests run inside the dev image (docker/Dockerfile.dev + compose `dev` service).
+# Production image: docker/Dockerfile. Host job has Docker only — no pip/venv installs on Bitbucket.
+
+image: atlassian/default-image:4
+
+options:
+  docker: true
+
+definitions:
+  steps:
+    - step: &lint
+        name: Lint + format + types
+        caches: [docker]
+        script:
+          - docker compose -f docker-compose.test.yml build dev
+          - docker compose -f docker-compose.test.yml run --rm --no-deps dev sh -ec 'ruff check app tests && black --check app tests && mypy app'
+
+    - step: &security
+        name: Security scans
+        caches: [docker]
+        script:
+          - docker compose -f docker-compose.test.yml build dev
+          - docker compose -f docker-compose.test.yml run --rm --no-deps dev sh -ec 'pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline'
+
+    - step: &i18n-check
+        name: Translation completeness
+        caches: [docker]
+        script:
+          - docker compose -f docker-compose.test.yml build dev
+          - docker compose -f docker-compose.test.yml run --rm --no-deps dev python scripts/i18n_check.py
+
+    - step: &check-env
+        name: Settings / .env.example drift
+        caches: [docker]
+        script:
+          - docker compose -f docker-compose.test.yml build dev
+          - docker compose -f docker-compose.test.yml run --rm --no-deps dev python scripts/check_env.py
+
+    - step: &test
+        name: Tests + migration round-trip
+        size: 2x
+        caches: [docker]
+        script:
+          - docker compose -f docker-compose.test.yml build dev
+          - docker compose -f docker-compose.test.yml up -d postgres_test redis_test mailhog_test
+          - until docker exec fb_postgres_test pg_isready -U app_test -d app_test >/dev/null 2>&1; do sleep 1; done
+          - |
+            docker compose -f docker-compose.test.yml run --rm dev sh -ec '
+              set -e
+              alembic upgrade head
+              alembic downgrade -1
+              alembic upgrade head
+              pytest --cov=app --cov-report=xml --cov-report=term-missing
+            '
+          - docker compose -f docker-compose.test.yml down -v
+
+    - step: &build-image
+        name: Build production image
+        size: 2x
+        caches: [docker]
+        script:
+          - docker build -t fastapi-boilerplate:$BITBUCKET_COMMIT -f docker/Dockerfile .
+          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL fastapi-boilerplate:$BITBUCKET_COMMIT
+
+    - step: &render-deploy
+        name: Trigger Render deploy
+        script:
+          - 'curl -fsSL -X POST "$RENDER_DEPLOY_HOOK_URL"'
+
+pipelines:
+  default:
+    - parallel:
+        - step: *lint
+        - step: *security
+        - step: *i18n-check
+        - step: *check-env
+    - step: *test
+
+  branches:
+    main:
+      - parallel:
+          - step: *lint
+          - step: *security
+          - step: *i18n-check
+          - step: *check-env
+      - step: *test
+      - step: *build-image
+      - step: *render-deploy

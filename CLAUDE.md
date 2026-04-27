@@ -12,7 +12,7 @@ This file is auto-loaded by **Claude Code** at the start of every session. It is
 - **What:** Production-grade FastAPI backend boilerplate. Domain code is added per project; the boilerplate ships only platform endpoints (`/health`, `/ready`, `/metrics`) and the architectural skeleton.
 - **Stack (locked, exact floors in spec §2):** Python 3.14.4+, FastAPI 0.136.1+, Pydantic 2.13.3+, SQLAlchemy 2.0.49+ (async + asyncpg), Alembic 1.18.4+, PostgreSQL 18.3+, Redis 8.0.16+, Celery 5.6.3+, structlog 25.5.0+, OpenTelemetry 1.24+, httpx 0.28.1+, tenacity 9.1.4+, **Babel 2.16+ (i18n/l10n; English + Arabic)**.
 - **Deploy:** Bitbucket Pipelines → render.com. App image runs three roles via `SERVICE_ROLE`: `web`, `worker`, `beat`.
-- **DX:** `make setup ENV=local|test|production` is the **single** entrypoint. Tests use an isolated stack (`docker-compose.test.yml`); never the dev DB.
+- **DX:** `make setup ENV=local|test|production` is the **single** environment entrypoint. **Lint, tests, i18n, and security tools** run only via **Docker** (`docker/Dockerfile.dev`, `docker compose -f docker-compose.test.yml run …`); see the Makefile. Pre-commit still installs on the **host** for Git. Tests use an isolated stack (`docker-compose.test.yml`); never the dev DB.
 - **Languages:** English (`en`, default + fallback) and Arabic (`ar`, RTL). Locale resolution is centralized; copy lives in `app/locales/<locale>/LC_MESSAGES/messages.po` (compiled to `.mo` at build time). See spec §11 and `.cursor/rules/i18n-l10n.mdc`.
 
 ## 2. Hard rules (non-negotiable)
@@ -53,7 +53,7 @@ These are review-rejecting violations:
 | A migration | `alembic-migrations.mdc` | Backward-compatible only, naming-convention metadata applied, `downgrade()` implemented for staging. |
 | A test | `testing-pytest.mdc`, `test-factories-seeders.mdc` | Use factories/seeders; never inline literal data; never target dev DB; never assert on translated copy — assert on `error.code` / structured fields. |
 | Docker / compose / render | `docker.mdc`, `deployment-render.mdc` | Multi-stage build, non-root user, `SERVICE_ROLE` selects entrypoint, `pybabel compile` runs in builder stage. |
-| `Makefile` / `scripts/setup_env.sh` | `dx-makefile.mdc` | `make setup ENV=…` must remain the single entry. |
+| `Makefile` / `scripts/setup_env.sh` | `dx-makefile.mdc` | `make setup ENV=…` is the single environment entry; **Make targets that run tools** must use **Docker** (no host `pip`/`pytest` in docs or CI). |
 | A user-visible string anywhere | `i18n-l10n.mdc` | Wrap with `_("key")`, run `make i18n-extract && make i18n-update`, translate `messages.po` for `en` **and** `ar`, run `make i18n-compile`, run `make i18n-check`. Use `/new-translation` slash command to follow the full workflow. |
 
 ## 4. Workflow expectations

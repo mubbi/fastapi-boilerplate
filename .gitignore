@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.Python
+build/
+dist/
+*.egg
+.eggs/
+.installed.cfg
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files (NEVER commit secrets; .env.test is committed — do not add .env.test here)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+.hypothesis/
+
+# Celery (local beat / scheduler files)
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local secrets / credentials (never commit)
+*.pem
+*.p12
+
+# Gettext: .po / .pot are source; .mo is produced by `make i18n-compile` or Docker build
+app/locales/**/*.mo
+
+# Build / generated artifacts
+openapi.json
+*.log
+junit.xml
+
+# Docker (local compose overrides)
+docker-compose.override.local.yml

@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.7
+# ──────────────────────────────────────────────────────────────────
+# Dev / CI tool image: locked runtime + dev dependencies (pytest, ruff, mypy, …).
+# Used via `docker compose -f docker-compose.test.yml run --rm dev <cmd>`.
+# Source is bind-mounted at /workspace — do not bake app code into this layer.
+# ──────────────────────────────────────────────────────────────────
+ARG PYTHON_VERSION=3.14-slim-bookworm
+
+FROM python:${PYTHON_VERSION}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/workspace
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        build-essential \
+        gettext \
+        libpq-dev \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY pyproject.toml uv.lock README.md ./
+
+RUN pip install --upgrade pip wheel uv \
+    && uv export --frozen --all-extras --no-emit-workspace -o /tmp/requirements.txt \
+    && pip install -r /tmp/requirements.txt
+
+# Default command is a no-op; compose always passes a command.
+CMD ["bash", "-c", "echo 'Use: docker compose … run --rm dev <tool>' && exit 1"]

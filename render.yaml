@@ -1,0 +1,156 @@
+# Render.com infrastructure-as-code blueprint.
+# `render blueprint launch` (or the dashboard sync) brings up:
+#   - managed Postgres
+#   - managed Redis
+#   - api (web)
+#   - worker
+#   - beat (single instance)
+
+databases:
+  - name: fb-postgres
+    plan: starter
+    databaseName: app_db
+    user: app
+
+services:
+  - type: redis
+    name: fb-redis
+    plan: starter
+    ipAllowList: []  # private network only
+
+  - type: web
+    name: fb-api
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    plan: starter
+    healthCheckPath: /ready
+    autoDeploy: true
+    # Migrations run before traffic switches; failure aborts deploy (old image keeps serving).
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: SERVICE_ROLE
+        value: web
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_DOCS_ENABLED
+        value: "false"
+      - key: APP_LOG_FORMAT
+        value: json
+      - key: APP_TRUSTED_HOSTS
+        sync: false
+      - key: APP_CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fb-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: METRICS_ENDPOINT_AUTH_TOKEN
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+
+  - type: worker
+    name: fb-worker
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: SERVICE_ROLE
+        value: worker
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_LOG_FORMAT
+        value: json
+      - key: APP_TRUSTED_HOSTS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fb-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+
+  - type: worker
+    name: fb-beat
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    plan: starter
+    autoDeploy: true
+    numInstances: 1  # exactly one — Beat lock is the safety net, not the source of truth
+    envVars:
+      - key: SERVICE_ROLE
+        value: beat
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_LOG_FORMAT
+        value: json
+      - key: APP_TRUSTED_HOSTS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fb-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: fb-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false

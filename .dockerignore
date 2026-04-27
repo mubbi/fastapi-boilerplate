@@ -1,0 +1,68 @@
+# VCS & host metadata
+.git
+.gitignore
+.gitattributes
+.github
+.bitbucket
+.gitlab
+
+# Dev / editor (not in runtime image)
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
+.tox
+.nox
+.hypothesis
+.vscode
+.idea
+.cursor
+.claude
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Tooling & CI (not needed in production build context)
+.editorconfig
+.python-version
+.pre-commit-config.yaml
+.secrets.baseline
+bandit.json
+junit.xml
+
+# Project: tests, docs, DX (runtime image uses COPY app, alembic, docker scripts only)
+docs
+tests
+scripts
+Makefile
+bitbucket-pipelines.yml
+render.yaml
+
+# Dev-only Docker recipe (builder uses docker/Dockerfile; keep entrypoint + healthcheck)
+docker/Dockerfile.dev
+
+# Compose & env (secrets must not enter context; examples not required at runtime)
+docker-compose*.yml
+docker-compose.override.*
+.env
+.env.local
+.env.production
+.env.*.local
+.env.test
+openapi.json
+
+# Markdown: keep root README for builder stage (COPY pyproject.toml uv.lock README.md)
+*.md
+!README.md

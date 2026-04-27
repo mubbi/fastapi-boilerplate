@@ -80,4 +80,4 @@ Two AI review passes run before merge; branch protection still requires at least
 - **Code review** (architecture, DI, Pydantic, SQLAlchemy, async, typing, i18n, testing): see `code-review.mdc`. Run via `/review-code` (Claude Code) or invoke `@code-review` rule in Cursor.
 - **Security review** (authn/z, secrets, SQLi/SSRF/IDOR, CORS, rate limit, containers, supply chain, audit logging, PII): see `security-review.mdc`. Run via `/review-security` or `@security-review`.
 
-CI gates (mypy, ruff, black, pytest, pip-audit, bandit, detect-secrets, Trivy/image scan, `make i18n-check`) are necessary but not sufficient — the reviewer rubrics catch design and exploitability issues that linters can't.
+CI gates (mypy, ruff, black, pytest, pip-audit, bandit, detect-secrets, Trivy/image scan, `make i18n-check` — all via **Docker** in Bitbucket) are necessary but not sufficient — the reviewer rubrics catch design and exploitability issues that linters can't.

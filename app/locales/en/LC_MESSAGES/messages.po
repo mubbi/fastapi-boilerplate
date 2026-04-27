@@ -1,0 +1,81 @@
+# English translations.
+msgid ""
+msgstr ""
+"Project-Id-Version: fastapi-boilerplate 0.1.0\n"
+"Report-Msgid-Bugs-To: backend@example.com\n"
+"POT-Creation-Date: 2026-04-27 00:00+0000\n"
+"PO-Revision-Date: 2026-04-27 00:00+0000\n"
+"Last-Translator: Backend Team <backend@example.com>\n"
+"Language: en\n"
+"Language-Team: en <LL@li.org>\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.16.0\n"
+
+msgid "An unexpected error occurred"
+msgstr "An unexpected error occurred"
+
+msgid "Validation failed"
+msgstr "Validation failed"
+
+msgid "Resource not found"
+msgstr "Resource not found"
+
+msgid "Conflicting request"
+msgstr "Conflicting request"
+
+msgid "Authentication required"
+msgstr "Authentication required"
+
+msgid "Permission denied"
+msgstr "Permission denied"
+
+msgid "Too many requests"
+msgstr "Too many requests"
+
+msgid "Upstream service failure"
+msgstr "Upstream service failure"
+
+msgid "Operation timed out"
+msgstr "Operation timed out"
+
+msgid "auth.invalid_token"
+msgstr "Your session is invalid or has expired. Please sign in again."
+
+msgid "errors.rate_limited"
+msgstr "You have made too many requests. Please try again shortly."
+
+msgid "errors.email.send_failed"
+msgstr "We could not deliver the email at this time."
+
+msgid "errors.http.timeout"
+msgstr "The request to an upstream service timed out."
+
+msgid "errors.http.upstream_unreachable"
+msgstr "An upstream service is currently unavailable."
+
+msgid "errors.http.upstream_failure"
+msgstr "An upstream service returned an unexpected error."
+
+msgid "errors.http.unreachable"
+msgstr "The upstream service is unreachable."
+
+msgid "errors.db.unavailable"
+msgstr "The database is currently unavailable."
+
+msgid "errors.metrics.forbidden"
+msgstr "Metrics access is not allowed."
+
+msgid "email.welcome.subject"
+msgstr "Welcome to %(app_name)s"
+
+msgid "email.welcome.greeting"
+msgstr "Hi %(name)s,"
+
+msgid "email.welcome.body"
+msgstr "Thanks for joining %(app_name)s. Your account is ready to use."
+
+msgid "email.welcome.signature"
+msgstr "— The %(app_name)s team"

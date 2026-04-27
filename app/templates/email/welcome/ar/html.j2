@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}" dir="{{ lang_dir }}">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{ _("email.welcome.subject", app_name=app_name) }}</title>
+  </head>
+  <body style="font-family: 'Segoe UI', Tahoma, Arial, sans-serif; line-height: 1.7; color: #222; direction: rtl; text-align: right;">
+    <p>{{ _("email.welcome.greeting", name=name) }}</p>
+    <p>{{ _("email.welcome.body", app_name=app_name) }}</p>
+    <p style="margin-top: 24px; color: #666;">
+      {{ _("email.welcome.signature", app_name=app_name) }}
+    </p>
+  </body>
+</html>

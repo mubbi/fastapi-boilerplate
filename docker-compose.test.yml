@@ -1,0 +1,77 @@
+name: fastapi-boilerplate-test
+
+# ──────────────────────────────────────────────────────────────────
+# Isolated test stack. Never touches the dev DB.
+# Different container names / ports so it can run in parallel with `local`.
+# ──────────────────────────────────────────────────────────────────
+
+services:
+  postgres_test:
+    image: postgres:18-alpine
+    container_name: fb_postgres_test
+    environment:
+      POSTGRES_DB: app_test
+      POSTGRES_USER: app_test
+      POSTGRES_PASSWORD: app_test
+    ports:
+      - "55432:5432"
+    volumes:
+      # PG 18+ images expect a single mount at /var/lib/postgresql (not .../data).
+      - postgres_test_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_test -d app_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis_test:
+    image: redis:8-alpine
+    container_name: fb_redis_test
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailhog_test:
+    image: mailhog/mailhog:v1.0.1
+    container_name: fb_mailhog_test
+    ports:
+      - "11025:1025"
+      - "18025:8025"
+
+  # Locked toolchain + dev deps (pytest, ruff, mypy, …). Bind-mounts the repo at /workspace.
+  # Quality gates: `docker compose … run --rm --no-deps dev <cmd>` (no DB).
+  # Tests: `docker compose … run --rm dev pytest …` (uses service hostnames below).
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    image: fastapi-boilerplate:dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    env_file:
+      - .env.test
+    environment:
+      # Overrides for URLs when pytest / alembic run *inside* this container (Docker network).
+      DATABASE_URL: postgresql+asyncpg://app_test:app_test@postgres_test:5432/app_test
+      DATABASE_URL_TEST: postgresql+asyncpg://app_test:app_test@postgres_test:5432/app_test
+      REDIS_URL: redis://redis_test:6379/0
+      REDIS_URL_TEST: redis://redis_test:6379/0
+      CELERY_BROKER_URL: redis://redis_test:6379/1
+      CELERY_RESULT_BACKEND: redis://redis_test:6379/2
+      CELERY_BROKER_URL_TEST: redis://redis_test:6379/1
+      CELERY_RESULT_BACKEND_TEST: redis://redis_test:6379/2
+      SMTP_HOST: mailhog_test
+      SMTP_PORT: "1025"
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+      redis_test:
+        condition: service_healthy
+
+volumes:
+  postgres_test_data:

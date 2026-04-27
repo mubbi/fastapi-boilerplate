@@ -8,7 +8,7 @@ Run the unified DX entrypoint for **local development**.
 
 ## Steps
 
-1. Verify prerequisites: `docker --version`, `docker compose version`, `make --version`.
+1. Verify prerequisites: `docker --version`, `docker compose version`, `make --version`. Do not rely on a host Python venv for the supported workflow — quality gates use **`make install`** (builds the `dev` image) and **`make lint` / `make test`**.
 2. Run:
    ```bash
    make setup ENV=local
@@ -23,8 +23,8 @@ Run the unified DX entrypoint for **local development**.
 
 - Copies `.env.example` → `.env` if missing.
 - Builds images, brings up `postgres`, `redis`, `mailhog` first.
-- Runs `alembic upgrade head` against the dev DB.
-- Compiles gettext catalogs (`pybabel compile -d app/locales`) so translations are available at runtime.
+- Runs `alembic upgrade head` **via the `api` container** against the dev DB.
+- Compiled `.mo` files come from the image build and Babel; use `make i18n-compile` in the `dev` container if you need to refresh catalogs from `.po` files on disk.
 - Optionally seeds via `scripts/seed_dev_data.py`.
 - Starts `api`, `worker`, `beat`.
 

@@ -1,0 +1,81 @@
+# Arabic translations.
+msgid ""
+msgstr ""
+"Project-Id-Version: fastapi-boilerplate 0.1.0\n"
+"Report-Msgid-Bugs-To: backend@example.com\n"
+"POT-Creation-Date: 2026-04-27 00:00+0000\n"
+"PO-Revision-Date: 2026-04-27 00:00+0000\n"
+"Last-Translator: Backend Team <backend@example.com>\n"
+"Language: ar\n"
+"Language-Team: ar <LL@li.org>\n"
+"Plural-Forms: nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 ? 4 : 5);\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.16.0\n"
+
+msgid "An unexpected error occurred"
+msgstr "حدث خطأ غير متوقع"
+
+msgid "Validation failed"
+msgstr "فشل التحقق من البيانات"
+
+msgid "Resource not found"
+msgstr "المورد غير موجود"
+
+msgid "Conflicting request"
+msgstr "الطلب يتعارض مع حالة المورد الحالية"
+
+msgid "Authentication required"
+msgstr "يلزم تسجيل الدخول"
+
+msgid "Permission denied"
+msgstr "ليس لديك صلاحية الوصول"
+
+msgid "Too many requests"
+msgstr "عدد الطلبات تجاوز الحد المسموح به"
+
+msgid "Upstream service failure"
+msgstr "حدث خلل في خدمة خارجية"
+
+msgid "Operation timed out"
+msgstr "انتهت مهلة العملية"
+
+msgid "auth.invalid_token"
+msgstr "جلستك غير صالحة أو منتهية. يرجى تسجيل الدخول مرة أخرى."
+
+msgid "errors.rate_limited"
+msgstr "لقد أرسلت عدداً كبيراً من الطلبات. يرجى المحاولة لاحقاً."
+
+msgid "errors.email.send_failed"
+msgstr "تعذّر إرسال البريد الإلكتروني في الوقت الحالي."
+
+msgid "errors.http.timeout"
+msgstr "انتهت مهلة الطلب إلى خدمة خارجية."
+
+msgid "errors.http.upstream_unreachable"
+msgstr "خدمة خارجية غير متاحة حالياً."
+
+msgid "errors.http.upstream_failure"
+msgstr "أعادت خدمة خارجية خطأ غير متوقع."
+
+msgid "errors.http.unreachable"
+msgstr "تعذّر الوصول إلى الخدمة الخارجية."
+
+msgid "errors.db.unavailable"
+msgstr "قاعدة البيانات غير متاحة حالياً."
+
+msgid "errors.metrics.forbidden"
+msgstr "الوصول إلى المقاييس غير مسموح."
+
+msgid "email.welcome.subject"
+msgstr "أهلاً بك في %(app_name)s"
+
+msgid "email.welcome.greeting"
+msgstr "مرحباً %(name)s،"
+
+msgid "email.welcome.body"
+msgstr "شكراً لانضمامك إلى %(app_name)s. حسابك جاهز للاستخدام."
+
+msgid "email.welcome.signature"
+msgstr "— فريق %(app_name)s"

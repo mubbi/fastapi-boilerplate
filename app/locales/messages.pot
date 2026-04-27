@@ -1,0 +1,83 @@
+# Translations template for fastapi-boilerplate.
+# Copyright (C) 2026 Architecture / Backend
+# This file is distributed under the same license as the fastapi-boilerplate project.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: fastapi-boilerplate 0.1.0\n"
+"Report-Msgid-Bugs-To: backend@example.com\n"
+"POT-Creation-Date: 2026-04-27 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.16.0\n"
+
+msgid "An unexpected error occurred"
+msgstr ""
+
+msgid "Validation failed"
+msgstr ""
+
+msgid "Resource not found"
+msgstr ""
+
+msgid "Conflicting request"
+msgstr ""
+
+msgid "Authentication required"
+msgstr ""
+
+msgid "Permission denied"
+msgstr ""
+
+msgid "Too many requests"
+msgstr ""
+
+msgid "Upstream service failure"
+msgstr ""
+
+msgid "Operation timed out"
+msgstr ""
+
+msgid "auth.invalid_token"
+msgstr ""
+
+msgid "errors.rate_limited"
+msgstr ""
+
+msgid "errors.email.send_failed"
+msgstr ""
+
+msgid "errors.http.timeout"
+msgstr ""
+
+msgid "errors.http.upstream_unreachable"
+msgstr ""
+
+msgid "errors.http.upstream_failure"
+msgstr ""
+
+msgid "errors.http.unreachable"
+msgstr ""
+
+msgid "errors.db.unavailable"
+msgstr ""
+
+msgid "errors.metrics.forbidden"
+msgstr ""
+
+msgid "email.welcome.subject"
+msgstr ""
+
+msgid "email.welcome.greeting"
+msgstr ""
+
+msgid "email.welcome.body"
+msgstr ""
+
+msgid "email.welcome.signature"
+msgstr ""

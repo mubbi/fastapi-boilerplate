@@ -1102,11 +1102,11 @@ CI runs steps 2 and 5 and asserts:
 - `postgres_test` — separate volume, credentials, database name (`app_test`), non-conflicting host port (e.g. `5433:5432`).
 - `redis_test` — separate logical DB indexes / port (e.g. `6380:6379`).
 - `mailhog` (or Mailpit) — captures outbound mail for assertions.
-- **No** `api` or `worker` service required for pytest; tests run **on the host or in a CI job container** with `pytest`, talking to these dependencies over the Docker network or `localhost` mapped ports.
+- **No** `api` or `worker` service required for pytest; tests run **inside the `dev` service** (`docker/Dockerfile.dev`) via `docker compose -f docker-compose.test.yml run … dev pytest`, with DB/Redis reached using Compose service hostnames (`postgres_test`, `redis_test`). Local developer workflows may still load `.env.test` on the host for editor tooling only—the supported execution path is Docker.
 
 **Workflow:**
 1. `make setup ENV=test` (see §17.2) starts **only** the test stack.
-2. CI runs the same Compose file (or Bitbucket service containers with equivalent images).
+2. CI runs the same Compose file: Bitbucket Pipelines builds `Dockerfile.dev` and runs `docker compose … run dev` for lint, security, i18n, and pytest (no `pip install` on the pipeline host).
 3. pytest uses `DATABASE_URL_TEST` / `REDIS_URL_TEST`; workers use `CELERY_TASK_ALWAYS_EAGER=true` for unit layers or a dedicated `redis_test` broker for Celery integration tests.
 
 **Result:** Developers can run the dev stack (`postgres`, `redis`, full app) and the test stack side by side without collisions; running tests **never** truncates or migrates the dev database.
@@ -1124,7 +1124,7 @@ CI runs steps 2 and 5 and asserts:
 - `.env.example` drift check.
 - OpenAPI schema diff comment on PR.
 - **Test isolation check:** pipeline fails if `DATABASE_URL` used in test job equals production patterns (e.g. contains `rds.amazonaws.com` without an explicit override flag).
-- **i18n catalog check (`make i18n-check`)** — `messages.pot` is in sync with sources, every catalog compiles, and translation completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` for every locale in `LOCALES_ENABLED`.
+- **i18n catalog check (`make i18n-check`, runs in the `dev` Docker image)** — `messages.pot` is in sync with sources, every catalog compiles, and translation completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` for every locale in `LOCALES_ENABLED`.
 
 ---
 
@@ -1147,9 +1147,9 @@ CI runs steps 2 and 5 and asserts:
 
 ### 17.1 Prerequisites
 - Docker + Docker Compose v2
-- Make
-- Python 3.14 (only if running outside containers, e.g., for IDE intellisense; the canonical runtime is the container)
-- (Optional) `uv` for fast dependency resolution outside containers.
+- Make (Git Bash / WSL on Windows)
+- Optional local Python 3.14 for IDE / editor resolution only; **all** supported developer and CI commands for `pytest`, `ruff`, `mypy`, Babel, and security scanners go through **`make` → Docker** (`docker/Dockerfile.dev` + `docker-compose.test.yml` service `dev`)
+- Optional: `uv` on the host only if you maintain `uv.lock` manually; `make install` builds the dev image from the lockfile without a host venv
 
 ### 17.2 Unified DX: one command for dev, test, and production roles
 
@@ -1159,7 +1159,7 @@ CI runs steps 2 and 5 and asserts:
 # Local development — full stack on your machine (Postgres, Redis, MailHog, API, workers, Beat)
 make setup ENV=local
 
-# Automated tests — isolated Postgres/Redis/Mail only; pytest runs on host or CI worker (not the app image)
+# Automated tests — isolated Postgres/Redis/Mail; pytest runs in the dev tool container (not the production app image)
 make setup ENV=test
 
 # Production process — does not start Docker Compose on a laptop; selects container command by role
@@ -1173,7 +1173,7 @@ make setup ENV=production SERVICE_ROLE=beat     # in Render Background Worker (C
 | `ENV` | What runs locally | App / infra touched |
 |---|---|---|
 | `local` | `docker compose` **default** file: `postgres`, `redis`, `mailhog` (or Mailpit), `api`, `worker`, `beat` | Uses `.env`; **main code unchanged** |
-| `test` | `docker compose -f docker-compose.test.yml up -d` → `postgres_test`, `redis_test`, `mailhog` | Loads `.env.test` into the shell / exports vars for pytest; **never** uses dev DB URLs |
+| `test` | `docker compose -f docker-compose.test.yml up -d` → `postgres_test`, `redis_test`, `mailhog` (+ `dev` image for `make test`) | `make test` runs `pytest` **in the `dev` container** with Compose-scoped DB URLs; **never** uses dev DB URLs |
 | `production` | No Compose (on Render: platform already provides managed Postgres + Redis) | `docker-entrypoint.sh` reads `SERVICE_ROLE` and execs **only** `gunicorn` (web), `celery worker` (worker), or `celery beat` (beat). Migrations run in a **pre-deploy job**, not in the web container startup unless explicitly allowed. |
 
 **`make setup` implementation checklist (Makefile + `scripts/setup_env.sh`):**
@@ -1181,7 +1181,7 @@ make setup ENV=production SERVICE_ROLE=beat     # in Render Background Worker (C
 2. Verify `docker` / `docker compose` when `ENV≠production` or when `CI=true` with Compose-based services.
 3. Copy `.env.example` → `.env` if missing (**local** only); never overwrite existing.
 4. **local:** `docker compose build` → up infra → wait for health → `alembic upgrade head` (dev DB) → optional seed → up `api worker beat mailhog`.
-5. **test:** ensure `.env.test` exists → `docker compose -f docker-compose.test.yml up -d` → wait for health → print `export DATABASE_URL=...` instructions (or run pytest in CI with injected env).
+5. **test:** ensure `.env.test` exists → `docker compose -f docker-compose.test.yml up -d` → wait for health → run **pytest inside the `dev` service** (`make test` / same in CI); document that host `pytest` is not a supported path.
 6. **production:** validate required secrets / `SERVICE_ROLE` → print the command line Render should use (no-op locally) **or** in the container entrypoint, branch on `SERVICE_ROLE` only — **application business code stays identical** across roles.
 
 **Rule:** No developer should need to remember three different setup stories; documentation and README only advertise `make setup ENV=…`.
@@ -1204,37 +1204,27 @@ Steps performed for **`ENV=local`**:
 9. Print accessible URLs and a quick `curl` against `/ready`.
 
 ### 17.4 Standard Make Targets (required)
+
+All targets below that run application or quality tools are implemented with **Docker** (`docker compose` + `Dockerfile.dev` for linters/tests, `docker/Dockerfile` for the local app stack). `make` is a thin wrapper so documentation stays one line per action.
+
 ```
 make setup ENV=local|test|production   # unified entry (see §17.2)
-make bootstrap           # alias: make setup ENV=local
-make up                  # docker compose up -d (dev stack)
-make down                # docker compose down
-make restart             # down + up
-make logs                # tail all service logs
-make logs-api            # tail api only
-make api-shell           # bash into api container
-make db-shell            # psql into postgres
-make redis-shell         # redis-cli
-make migrate             # alembic upgrade head
-make migration m="msg"   # alembic revision --autogenerate -m "msg"
-make migrate-down        # alembic downgrade -1
-make test                # ensures test stack up, then pytest with .env.test
-make test-unit           # pytest -m unit
-make test-int            # pytest -m integration
-make lint                # ruff + black --check + mypy + bandit
-make format              # ruff --fix + black
-make typecheck           # mypy app
-make audit               # pip-audit + detect-secrets
-make seed                # reseed dev data
-make precommit-install   # install pre-commit hooks
-make ci-local            # run the full CI gauntlet locally
-make openapi             # export openapi.json
-make i18n-extract        # pybabel extract → app/locales/messages.pot (see §11.4)
-make i18n-update         # pybabel update -i messages.pot -d app/locales/
-make i18n-compile        # pybabel compile -d app/locales/   (.po → .mo)
-make i18n-check          # CI gate: completeness ≥ LOCALE_TRANSLATION_COMPLETENESS_MIN, no .pot drift
-make new-locale L=ar     # scaffold app/locales/<L>/LC_MESSAGES/messages.po and email/<*>/<L>/ stubs
-make clean               # prune containers + volumes (DESTRUCTIVE)
+make install / make build-dev          # build the `dev` image (Dockerfile.dev)
+make up / make down / make logs        # local dev stack (docker-compose.yml)
+make run / make worker / make beat     # hints or tail worker/beat logs
+make api-shell                         # sh in the api container
+make migrate / make migration MSG=… / make downgrade   # alembic via `api` (dev stack up)
+make test / make test-all / make test-unit / make test-int / make cov   # pytest in `dev` + test stack
+make lint / make format / make typecheck                 # ruff + black + mypy in `dev` (--no-deps)
+make audit                             # pip-audit, bandit, detect-secrets in `dev`
+make check-env / make openapi          # drift + OpenAPI dump in `dev`
+make i18n-extract|update|compile|check # Babel / i18n_check in `dev`
+make new-locale LOCALE=xx              # pybabel init in `dev`
+make precommit-install                 # host Git hooks only
+make ci-local                          # lint + audit + i18n-check + test (all Docker)
+make build                             # production image (docker/Dockerfile)
+make test-up / make test-down          # test compose only
+make clean                             # dev + test compose down -v
 ```
 
 ### 17.5 docker-compose.yml Services (development)
@@ -1264,7 +1254,7 @@ All services share a bridge network, declare healthchecks, depend on each other 
 ### 17.7 Developer Experience
 - VS Code devcontainer config (`.devcontainer/`) optional but recommended.
 - `.editorconfig` enforces line endings, indentation, charset.
-- Pre-commit hooks installed during `make setup ENV=local`.
+- Pre-commit hooks are installed on the **host** with `make precommit-install` (optional); **CI and the supported quality path** use `make lint` / `make test` (Docker only).
 - `AGENTS.md` documents AI assistant conventions for the repo.
 - `make i18n-extract && make i18n-compile` runs as part of `make setup ENV=local` so a fresh clone has compiled `.mo` catalogs ready (idempotent; no-op when up to date).
 - README has a "5-minute quickstart" section that mentions **only** `make setup ENV=local` + a "common pitfalls" section (wrong `ENV`, pytest pointing at dev DB, missing `.mo` after editing `.po`).
@@ -1275,8 +1265,8 @@ All services share a bridge network, declare healthchecks, depend on each other 
 
 ### 18.1 Build
 - Multi-stage Dockerfile:
-  1. `builder` — installs deps via `uv pip sync requirements.lock` (or `pip install --no-cache-dir -r requirements.txt`); compiles gettext catalogs (`pybabel compile -d app/locales/`) so `.mo` files are deterministic per build.
-  2. `runtime` — slim base image, non-root user `app`, copies only the venv and `app/` (including compiled `app/locales/**/messages.mo`), `app/templates/`, `alembic/`, `scripts/`, `pyproject.toml`.
+  1. `builder` — installs runtime deps from `uv.lock` via `uv export --frozen` + `pip install -r`; compiles gettext catalogs (`pybabel compile -d app/locales/`) so `.mo` files are deterministic per build. A separate **`Dockerfile.dev`** image (same lockfile, all extras) is used for local and CI tooling only.
+  2. `runtime` — slim base image, non-root user `app`, copies installed deps from the builder to `/usr/local`, plus `app/` (including compiled `app/locales/**/messages.mo`), `app/templates/`, `alembic/`, `pyproject.toml`, and entrypoint scripts.
 - Image labels: `org.opencontainers.image.revision = <git_sha>`, `version = <APP_VERSION>`.
 - Same image runs `api`, `worker`, `beat` — entry command differs.
 - Image scanned (`trivy` or Render's built-in scan) — fail on high-severity CVEs.

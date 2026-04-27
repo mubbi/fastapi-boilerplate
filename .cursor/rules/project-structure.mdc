@@ -36,7 +36,7 @@ tests/
   fakes/             # In-memory Protocol implementations
   unit/  integration/  api/  contract/
 alembic/             # Migrations
-docker/              # Dockerfile, entrypoint, healthcheck
+docker/              # Dockerfile (runtime), Dockerfile.dev (lint/tests), entrypoint, healthcheck
 babel.cfg            # Babel extraction config (Python + Jinja2)
 docs/
   tech-architecture-requirements.md   # Authoritative spec

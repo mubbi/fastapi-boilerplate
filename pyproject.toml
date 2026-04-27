@@ -1,0 +1,191 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastapi-boilerplate"
+version = "0.1.0"
+description = "Production-ready FastAPI backend boilerplate (layered, DI, async, i18n, observability)."
+readme = "README.md"
+requires-python = ">=3.14.4"
+license = { text = "Proprietary" }
+authors = [{ name = "Architecture / Backend" }]
+dependencies = [
+    # ── API / runtime ─────────────────────────────────────────────
+    "fastapi>=0.136.1",
+    "uvicorn[standard]>=0.32.0",
+    "gunicorn>=23.0.0",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.5.0",
+    "email-validator>=2.2.0",
+
+    # ── Database / migrations ─────────────────────────────────────
+    "sqlalchemy[asyncio]>=2.0.49",
+    "asyncpg>=0.31.0",
+    "alembic>=1.18.4",
+
+    # ── Cache / queue ─────────────────────────────────────────────
+    "redis[hiredis]>=6.4.0",
+    "celery[redis]>=5.6.3",
+
+    # ── HTTP / resilience ─────────────────────────────────────────
+    "httpx>=0.28.1",
+    "tenacity>=9.1.4",
+    # Declared so `limits` / slowapi always resolve `packaging` in production installs.
+    "packaging>=24.0",
+
+    # ── Email / templating ────────────────────────────────────────
+    "aiosmtplib>=5.1.0",
+    "jinja2>=3.1.4",
+
+    # ── i18n / l10n ───────────────────────────────────────────────
+    "babel>=2.16.0",
+
+    # ── Security ──────────────────────────────────────────────────
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "slowapi>=0.1.9",
+
+    # ── Observability ─────────────────────────────────────────────
+    "structlog>=25.5.0",
+    "prometheus-client>=0.25.0",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-asyncpg>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-redis>=0.48b0",
+    "opentelemetry-instrumentation-celery>=0.48b0",
+    "sentry-sdk[fastapi]>=2.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # ── Testing ───────────────────────────────────────────────────
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "factory-boy>=3.3.0",
+    "faker>=40.15.0",
+    "freezegun>=1.5.0",
+    "respx>=0.21.0",
+    "anyio>=4.4.0",
+
+    # ── Lint / format / type ──────────────────────────────────────
+    "ruff>=0.15.12",
+    "black>=26.3.1",
+    "mypy>=1.20.2",
+    "types-passlib",
+
+    # ── Security scanning ─────────────────────────────────────────
+    "pip-audit>=2.7.0",
+    "bandit>=1.9.4",
+    "detect-secrets>=1.5.0",
+
+    # ── DX ────────────────────────────────────────────────────────
+    "pre-commit>=4.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# ── Ruff ─────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["alembic/versions", "app/locales", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N", "RUF", "ASYNC", "S", "PL", "PT", "TID", "TCH"]
+ignore = [
+    "E501",    # line length handled by black
+    "S101",    # assert is fine in tests
+    "PLR0913", # too many arguments — composition root needs them
+    "PLR2004", # magic values — already centralised in core/constants where it matters
+    "B008",    # FastAPI uses Depends() in defaults
+    "S104",    # binding 0.0.0.0 is intentional in containers
+    "S105",    # default secret placeholders
+    "S106",
+    "S110",    # try/except/pass — intentional in defensive handlers
+    "PLC0415", # late imports — required to break circulars (e.g. exception handlers)
+    "PLW0603", # globals — intentional in singletons (logging, metrics)
+    "TC001",   # typing-only first-party imports — runtime type imports stay readable
+    "TC002",
+    "TC003",
+    "UP046",   # PEP 695 generic class syntax — keep classic for editor compat
+    "UP047",   # PEP 695 generic function syntax — keep classic for editor compat
+    "B019",    # cached methods — intentional pattern on singleton holders
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR", "ASYNC230"]
+"alembic/**" = ["E", "F", "S"]
+"scripts/**" = ["S", "T201"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+
+# ── Black ────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py314"]
+extend-exclude = '''
+/(
+  \.venv
+  | alembic/versions
+  | app/locales
+)/
+'''
+
+# ── mypy ─────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+plugins = ["sqlalchemy.ext.mypy.plugin", "pydantic.mypy"]
+exclude = ["alembic/versions/", "app/locales/", "build/", "dist/"]
+
+[[tool.mypy.overrides]]
+module = ["passlib.*", "jose.*", "slowapi.*", "celery.*", "kombu.*", "factory.*", "freezegun.*"]
+ignore_missing_imports = true
+
+# ── Pytest ───────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers --strict-config -p no:cacheprovider"
+testpaths = ["tests"]
+markers = [
+    "unit: fast unit tests, no I/O",
+    "integration: requires test DB / Redis",
+    "api: HTTP-level tests against the FastAPI app",
+    "contract: provider Protocol contract tests",
+    "slow: long-running",
+]
+
+# ── Coverage ─────────────────────────────────────────────────────
+[tool.coverage.run]
+branch = true
+source = ["app"]
+omit = ["app/locales/*", "alembic/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+# ── Bandit ───────────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests", "alembic", "app/locales"]
+skips = ["B101"]

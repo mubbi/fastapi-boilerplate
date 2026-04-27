@@ -6,6 +6,8 @@ alwaysApply: false
 
 # Testing — pytest
 
+**How to run:** `make test` / `make test-all` — executes **pytest inside the `dev` Docker image** (`docker/Dockerfile.dev`, `docker compose -f docker-compose.test.yml run … dev`). Host `pytest` is not the supported workflow (Compose network URLs vs `localhost` in `.env.test`).
+
 ## Layers
 
 - `tests/unit/` — services, repositories with fakes, utils. **No** real network, **no** dev DB. Mark `@pytest.mark.unit`.

@@ -1,5 +1,5 @@
 ---
-description: Unified DX — Makefile + scripts/setup_env.sh — `make setup ENV=...` is the only entrypoint.
+description: Unified DX — Makefile + scripts/setup_env.sh — `make setup ENV=...` is the environment entrypoint; **tooling runs in Docker** (`Dockerfile.dev`).
 globs: Makefile,scripts/**/*.sh,scripts/**/*.py
 alwaysApply: false
 ---
@@ -8,85 +8,61 @@ alwaysApply: false
 
 **One command** brings up a coherent environment: `make setup ENV=local|test|production`.
 
+**All supported quality and test commands** (`make lint`, `make test`, `make i18n-*`, `make audit`, …) run **inside Docker** using the `dev` service in `docker-compose.test.yml`, built from `docker/Dockerfile.dev` (locked `uv.lock` with all extras). The only common exception is **`make precommit-install`**, which registers Git hooks on the **host** so Git can invoke them.
+
 ## Behavior matrix
 
 | `ENV` | Brings up | Runs migrations | Seeds | Applies to |
 |---|---|---|---|---|
-| `local` | full dev stack (api, worker, beat, postgres, redis, mailhog) via `docker-compose.yml` | yes (against dev DB) | optional (`scripts/seed_dev_data.py`) | developer machines |
-| `test` | isolated test infra (postgres_test, redis_test, mailhog) via `docker-compose.test.yml` | yes (against test DB) | no — tests use factories/seeders | local & CI |
-| `production` (with `SERVICE_ROLE=web|worker|beat`) | nothing (managed services on Render) | only when `SERVICE_ROLE=web` AND first replica (handled by Render `preDeployCommand`) | no | container entrypoint on Render |
+| `local` | full dev stack (api, worker, beat, postgres, redis, mailhog) via `docker-compose.yml` | yes (`docker compose exec api alembic …` / `setup_env.sh`) | optional (`scripts/seed_dev_data.py`) | developer machines |
+| `test` | isolated test infra (postgres_test, redis_test, mailhog) via `docker-compose.test.yml` | via `make test` / CI **inside** the `dev` container | no — tests use factories/seeders | local & CI |
+| `production` (with `SERVICE_ROLE=web|worker|beat`) | nothing (managed services on Render) | only pre-deploy / job (platform) | no | container entrypoint on Render |
 
 ## Hard rules
 
-- ❌ NEVER add a setup path that bypasses `make setup`. README must point at it.
+- ❌ NEVER add a setup path that bypasses `make setup` for environment bring-up. README must point at it.
+- ❌ NEVER document **host** `pip install -e ".[dev]"` + `pytest` / `ruff` as the primary workflow; the supported path is **`make install`** (build `dev` image) + **`make …`**.
 - ❌ NEVER read env files outside `app/core/config.py` and `scripts/setup_env.sh`.
 - ❌ NEVER let `ENV=local` and `ENV=test` share volumes — separate compose files, separate volume names.
 - ✅ `scripts/setup_env.sh` is idempotent: re-running with the same `ENV` is safe and fast.
 - ✅ Every Make target is `.PHONY`; no implicit file deps.
 - ✅ Exit codes: 0 success, non-zero on failure. CI relies on this.
 
-## Required Make targets
+## Required Make targets (implementation: see `Makefile`)
 
 | Target | What it does |
 |---|---|
 | `make setup ENV=...` | Delegates to `scripts/setup_env.sh "$ENV"`. |
-| `make up` / `make down` | Start / stop the dev compose stack. |
-| `make logs SERVICE=...` | Tail logs for a compose service. |
-| `make shell` | `docker compose exec api bash`. |
-| `make migrate` | `alembic upgrade head`. |
-| `make migrate-down` | `alembic downgrade -1`. |
-| `make migration m="<msg>"` | `alembic revision --autogenerate -m "<msg>"`. |
-| `make test` | Full test suite with `.env.test`. Asserts test stack is up first. |
-| `make test-unit` / `make test-int` / `make test-api` | Marker-filtered runs. |
-| `make lint` / `make format` | Ruff + Black. |
-| `make typecheck` | Mypy strict. |
-| `make precommit-install` | `pre-commit install --hook-type pre-commit --hook-type commit-msg`. |
-| `make openapi` | Export `openapi.json` for diffing. |
-| `make seed` | Run `scripts/seed_dev_data.py` against the dev DB. |
-| `make check-env` | Verify every Settings field has an entry in `.env.example`. |
-| `make security-scan` | Bandit + pip-audit + detect-secrets. |
-| `make i18n-extract` | `pybabel extract -F babel.cfg -o app/locales/messages.pot app/`. |
-| `make i18n-update` | `pybabel update -i app/locales/messages.pot -d app/locales/`. |
-| `make i18n-compile` | `pybabel compile -d app/locales/` (.po → .mo). |
-| `make i18n-check` | CI gate: completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` for every locale, no `messages.pot` drift, all catalogs compile. |
-| `make new-locale L=xx` | Scaffold `app/locales/xx/LC_MESSAGES/` and `app/templates/email/<*>/xx/` stubs. |
+| `make install` / `make build-dev` | `docker compose … build dev` (tool image). |
+| `make up` / `make down` | Start / stop the **local** dev compose stack. |
+| `make logs` | Tail logs for the local stack. |
+| `make api-shell` | `docker compose exec api sh` |
+| `make migrate` / `make migration` / `make downgrade` | `alembic` **via the running `api` container** against the dev DB. |
+| `make test` / `test-all` / `test-unit` / `test-int` / `cov` | `docker compose -f docker-compose.test.yml run --rm dev …` (pytest in container). |
+| `make lint` / `make format` / `make typecheck` | Ruff + Black + mypy in `dev` with `--no-deps`. |
+| `make precommit-install` | `pre-commit install` on the **host** (Git). |
+| `make openapi` | `scripts/dump_openapi.py` in `dev` → `openapi.json` on the host. |
+| `make check-env` | `scripts/check_env.py` in `dev`. |
+| `make audit` | `pip-audit`, `bandit`, `detect-secrets` in `dev`. |
+| `make i18n-extract` / `i18n-update` / `i18n-compile` / `i18n-check` | Babel / `i18n_check.py` in `dev`. |
+| `make new-locale` | `pybabel init` in `dev`. |
+| `make ci-local` | Chains Docker-backed targets (lint → audit → i18n-check → test). |
 
 ## scripts/setup_env.sh (canonical contract)
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-ENV="${1:-local}"
-case "$ENV" in
-  local)
-    [[ -f .env ]] || cp .env.example .env
-    docker compose up -d postgres redis mailhog
-    docker compose run --rm api alembic upgrade head
-    docker compose run --rm api pybabel compile -d app/locales/    # ensure .mo files exist
-    docker compose up -d api worker beat
-    ;;
-  test)
-    docker compose -f docker-compose.test.yml up -d
-    docker compose -f docker-compose.test.yml exec -T postgres_test pg_isready -t 30
-    ENV_FILE=".env.test" alembic upgrade head
-    pybabel compile -d app/locales/                                # tests need compiled catalogs
-    ;;
-  production)
-    [[ -n "${SERVICE_ROLE:-}" ]] || { echo "SERVICE_ROLE is required"; exit 1; }
-    exec docker/entrypoint.sh
-    ;;
-  *) echo "Unknown ENV: $ENV" >&2; exit 2 ;;
-esac
-```
+- **`local`:** `docker compose up -d --build` for the dev stack, wait for Postgres, `docker compose exec api alembic upgrade head`.
+- **`test`:** `docker compose -f docker-compose.test.yml up -d`, wait for `postgres_test` — print hint to run `make test` (pytest in `dev` image).
+- **`production`:** print-only / entrypoint contract for Render.
 
 ## DX expectations
 
-- Fresh `git clone` → `make setup ENV=local` → working API in **< 5 minutes**.
-- Adding a new env var: update `Settings` + `.env.example` + (if test-relevant) `.env.test` in the same PR. CI fails on drift.
-- VS Code workspace settings ship with: Black format on save, Ruff on save, mypy import resolution.
+- Fresh `git clone` → `make setup ENV=local` → working API in **< 5 minutes** (Docker required).
+- Adding a new env var: update `Settings` + `.env.example` + (if test-relevant) `.env.test` in the same PR. `make check-env` fails on drift.
+- VS Code may use a local interpreter for Pylance; run **`make lint`** / **`make test`** before push for real gates.
 
 ## Anti-patterns
 
-- ❌ A `Makefile.dev` and a `Makefile.prod` — one Makefile, one entry.
+- ❌ A `Makefile.dev` and a `Makefile.prod` — one Makefile, one environment entry, Docker-backed tools.
 - ❌ A "first run" `bootstrap.sh` plus a different "daily" command — re-runnable `make setup` does both.
-- ❌ Hidden side-effects (downloading models, fetching keys) in `make setup` without explicit logs.
+- ❌ Documenting `pytest` on the host against `.env.test` as equivalent to `make test` (URLs differ from in-network Compose service names).
+- ❌ CI stages that `pip install -e ".[dev]"` on a bare `python` image instead of reusing the **`dev` image** and `uv.lock`.

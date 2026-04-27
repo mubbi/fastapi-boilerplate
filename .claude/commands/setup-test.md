@@ -1,41 +1,42 @@
 ---
-description: Bring up the isolated test stack (postgres_test, redis_test, mailhog) and run pytest.
+description: Bring up the isolated test stack (postgres_test, redis_test, mailhog) and run pytest in Docker.
 ---
 
 # /setup-test
 
-Start **only** the isolated test infrastructure and execute the test suite.
+Start **only** the isolated test infrastructure and execute the test suite **inside the `dev` container** (same as CI).
 
 ## Steps
 
-1. Bring up the test stack (no app containers):
+1. Bring up the test stack and build the dev image if needed:
    ```bash
-   make setup ENV=test
+   make install          # once: docker compose … build dev
+   make setup ENV=test   # docker compose -f docker-compose.test.yml up -d
    ```
-   This runs `docker compose -f docker-compose.test.yml up -d` and waits for healthchecks.
-2. Run tests:
+2. Run tests (pytest never runs on the host in the supported path):
    ```bash
-   make test                # full suite, loads .env.test
+   make test                # quick suite (excludes `slow`)
+   make test-all
    make test-unit           # pytest -m unit
    make test-int            # pytest -m integration
    ```
 3. Tear down when done:
    ```bash
-   docker compose -f docker-compose.test.yml down -v
+   make test-down
+   # or: docker compose -f docker-compose.test.yml down -v
    ```
 
 ## Hard guarantees (architecture spec §15.2 and §15.4)
 
-- Tests use `DATABASE_URL_TEST` and `REDIS_URL_TEST` **only**.
+- Tests use `DATABASE_URL_TEST` and `REDIS_URL_TEST` **only**; inside the `dev` container these resolve to `postgres_test` and `redis_test` on the Compose network.
 - `conftest.py` asserts the DB URL matches a `_test` allowlist; misconfig fails fast before any schema change.
 - The dev stack (`docker-compose.yml`) is untouched and can run in parallel.
 - No application code branches on "am I in a test"; only configuration and dependency overrides differ.
 
 ## i18n during tests
 
-- `make setup ENV=test` runs `pybabel compile -d app/locales` so translations are available to integration / API tests.
+- If you add user-visible strings, run `make i18n-extract` / `make i18n-check` (both use the `dev` image).
 - Tests **never assert on translated copy**. Assert on `error.code`, `Content-Language`, or structured fields. See `.cursor/rules/testing-pytest.mdc`.
-- Run `make i18n-check` locally before pushing if you added user-visible strings.
 
 ## When to extend
 

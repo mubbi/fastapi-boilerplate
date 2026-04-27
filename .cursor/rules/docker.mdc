@@ -6,7 +6,9 @@ alwaysApply: false
 
 # Docker & Compose
 
-Single image runs three roles via `SERVICE_ROLE`: **web**, **worker**, **beat**.
+The **production** image (`docker/Dockerfile`) runs three roles via `SERVICE_ROLE`: **web**, **worker**, **beat**.
+
+The **dev / CI** image (`docker/Dockerfile.dev`) installs **all** extras from `uv.lock` (pytest, ruff, mypy, Babel, …). It is used only as the Compose service `dev` in `docker-compose.test.yml` (`docker compose … run --rm dev <cmd>`). The repo is bind-mounted at `/workspace`; do not rely on baking application code into `Dockerfile.dev`.
 
 ## Dockerfile (multi-stage)
 
@@ -74,10 +76,10 @@ esac
 
 ## docker-compose.test.yml (isolation)
 
-- Services: `postgres_test` (port 55432), `redis_test` (port 56379), `mailhog`.
-- **No app containers** — pytest runs on the host with `.env.test`.
-- Separate volume names (`postgres_test_data`, `redis_test_data`) so dev data is never shared.
-- Tests run via `make setup ENV=test && make test`. CI tears down after the run.
+- Services: `postgres_test` (port 55432), `redis_test` (port 56379), `mailhog_test`, **`dev`** (toolchain).
+- Pytest, Alembic in CI, ruff, mypy, Babel, and drift scripts run **inside `dev`** with Compose network URLs (`postgres_test`, `redis_test`). **Do not** document host `pytest` as the supported path.
+- Named volume `postgres_test_data` for Postgres data (ephemeral when using `make test-down` / `down -v`).
+- Tests run via `make test` or `docker compose -f docker-compose.test.yml run --rm dev pytest …`. CI uses the same Compose file.
 
 ## Build & cache
 

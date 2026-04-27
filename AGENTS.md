@@ -37,6 +37,8 @@ make setup ENV=production SERVICE_ROLE=web|worker|beat   # used by the container
 
 Tests **never** target the dev database — `conftest.py` enforces a guardrail.
 
+**Tooling:** Ruff, Black, mypy, pytest, Babel, `pip-audit`, `bandit`, and the drift scripts are executed **inside the dev image** built from [`docker/Dockerfile.dev`](docker/Dockerfile.dev) and referenced as the `dev` service in [`docker-compose.test.yml`](docker-compose.test.yml). Use `make install` to build that image, then e.g. `make lint` / `make test`. **Bitbucket Pipelines** uses the same Docker commands, not a host virtualenv. **Exception:** `make precommit-install` installs Git hooks on your machine (hooks may still call tools; the canonical check before push is `make ci-local` or individual `make` targets).
+
 ## Languages
 
 The boilerplate ships with **English (`en`, default + fallback)** and **Arabic (`ar`, RTL)**. Locale handling is centralized in `app/core/i18n.py`; copy lives in `app/locales/<locale>/LC_MESSAGES/messages.po`. See [`tech-architecture-requirements.md`](docs/tech-architecture-requirements.md) §11 and [`.cursor/rules/i18n-l10n.mdc`](.cursor/rules/i18n-l10n.mdc).

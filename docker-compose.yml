@@ -1,0 +1,112 @@
+name: fastapi-boilerplate
+
+# ──────────────────────────────────────────────────────────────────
+# Local development stack.
+# Use `make setup ENV=local` (preferred) or `docker compose up`.
+# Test stack lives in `docker-compose.test.yml` — never share state.
+# ──────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: fb_postgres
+    environment:
+      POSTGRES_DB: app_db
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    volumes:
+      # PG 18+ images expect a single mount at /var/lib/postgresql (not .../data).
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  redis:
+    image: redis:8-alpine
+    container_name: fb_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: fb_mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:local
+    container_name: fb_api
+    environment:
+      SERVICE_ROLE: web
+      APP_ENV: local
+      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:local
+    container_name: fb_worker
+    environment:
+      SERVICE_ROLE: worker
+      APP_ENV: local
+      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: fastapi-boilerplate:local
+    container_name: fb_beat
+    environment:
+      SERVICE_ROLE: beat
+      APP_ENV: local
+      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
