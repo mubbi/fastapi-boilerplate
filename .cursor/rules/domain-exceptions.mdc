@@ -1,0 +1,90 @@
+---
+description: DomainError hierarchy and HTTP mapping. Services raise; the handler translates.
+globs: app/core/exceptions.py,app/services/**/*.py,app/api/**/*.py
+alwaysApply: false
+---
+
+# Domain Exceptions
+
+The single rule that keeps services free of HTTP concerns.
+
+## Hierarchy (in `app/core/exceptions.py`)
+
+```python
+class DomainError(Exception):
+    code: str
+    message: str
+    details: dict[str, object]
+
+class NotFoundError(DomainError): ...        # → 404
+class ConflictError(DomainError): ...        # → 409
+class ValidationError(DomainError): ...      # → 422
+class UnauthorizedError(DomainError): ...    # → 401
+class ForbiddenError(DomainError): ...       # → 403
+class RateLimitedError(DomainError): ...     # → 429
+class ExternalServiceError(DomainError): ... # → 502
+class TimeoutError(DomainError): ...         # → 504
+```
+
+Each subclass sets a stable `code` constant (`WIDGET_NOT_FOUND`, `SLUG_TAKEN`, …) for clients.
+
+`message` is the **English source string AND the gettext translation key** (e.g. `"Widget %(widget_id)s does not exist"`). `details` is the templating params dict. The handler translates `message` to the resolved locale (`request.state.locale`) before sending the response. See `i18n-l10n.mdc`.
+
+## Handler mapping
+
+`register_exception_handlers(app)` produces a uniform envelope:
+
+```json
+{
+  "error": {
+    "code": "WIDGET_NOT_FOUND",
+    "message": "Widget abc123 does not exist",
+    "details": { "widget_id": "abc123" },
+    "request_id": "...",
+    "timestamp": "2026-04-27T19:00:00Z"
+  }
+}
+```
+
+## Hard rules
+
+- ❌ Services / repositories NEVER raise `HTTPException`.
+- ❌ Routers NEVER raise `HTTPException` — let the handler translate.
+- ❌ Don't reuse builtin `Exception`, `RuntimeError`, etc. for domain failures.
+- ❌ Don't translate / format `message` inside the service. Pass it as a gettext key with named params; the handler translates it.
+- ❌ Don't include locale-specific copy in `code` — `code` is locale-independent and stable.
+- ✅ Always set a stable `code`; clients depend on it more than `message`.
+- ✅ Use **named** params in `message`: `"Widget %(widget_id)s does not exist"` + `details={"widget_id": ...}`. Positional `%s` breaks for languages with different word order.
+- ✅ Include actionable `details` (which field, which id), not raw stack data.
+- ✅ Log at the layer that **catches**, not the layer that raises (avoid double-logging).
+- ✅ Add every new error `message` to `messages.pot` in the same PR (`make i18n-extract && make i18n-update`); translate to **all** enabled locales before merge.
+
+## Examples
+
+```python
+# Service
+async def get(self, widget_id: UUID) -> Widget:
+    widget = await self._repo.get_by_id(widget_id)
+    if widget is None:
+        raise NotFoundError(
+            code="WIDGET_NOT_FOUND",
+            message="Widget %(widget_id)s does not exist",   # gettext key, NOT an f-string
+            details={"widget_id": str(widget_id)},
+        )
+    return widget
+```
+
+```python
+# Router (no try/except)
+@router.get("/{widget_id}", response_model=WidgetResponse)
+async def get_widget(
+    widget_id: UUID,
+    svc: Annotated[WidgetService, Depends(get_widget_service)],
+) -> WidgetResponse:
+    return WidgetResponse.model_validate(await svc.get(widget_id))
+```
+
+## When to wrap vs re-raise
+
+- **Wrap** infra errors (`asyncpg.Error`, `redis.exceptions.RedisError`, `httpx.HTTPError`) → `ExternalServiceError` / `TimeoutError`. Lose the original via `raise X from err`.
+- **Re-raise** domain errors unchanged — never re-wrap `NotFoundError` as another `DomainError`.

@@ -1,0 +1,270 @@
+---
+description: Code reviewer rubric — layered architecture, DI, Pydantic v2, SQLAlchemy 2.0, async, modern Python typing, i18n, testing. Apply to any change set under review.
+globs: app/**/*.py,tests/**/*.py,docker/**/*,alembic/**/*,Makefile,pyproject.toml,bitbucket-pipelines.yml,docker-compose*.yml,Dockerfile
+alwaysApply: false
+---
+
+# Code Reviewer
+
+Authoritative rubric for **technical** code review (correctness, design, quality). Security-specific review lives in `security-review.mdc` — do both for any non-trivial change.
+
+> **Stack lock (do not drift):** Python 3.14+, FastAPI 0.136+, Pydantic v2 (2.13+), SQLAlchemy 2.0+ (async + asyncpg), Alembic 1.18+, PostgreSQL 18+, Redis 8+, Celery 5.6+, structlog 25.5+, OpenTelemetry 1.24+, httpx 0.28+, tenacity 9.1+, Babel 2.16+. Spec: `docs/tech-architecture-requirements.md`.
+
+## Reviewer mindset
+
+- **The rule wins.** When generic best practice conflicts with `.cursor/rules/*.mdc` or the architecture spec, the rule is the deliberate project decision — call out the violation, don't relax the rule.
+- **Block on hard rules; comment on soft rules.** Hard rules below produce a `[BLOCKER]`. Soft preferences produce a `[NIT]`.
+- **One concern per PR.** If the diff mixes refactor + feature + migration unrelated to the feature, request a split.
+- **Prefer simplicity (KISS / YAGNI).** If an abstraction is added without ≥3 concrete callers, request inlining.
+- **Names matter.** Vague verbs (`process`, `handle`, `manage`) and vague nouns (`Manager`, `Helper`, `Util`) trigger a follow-up question.
+
+## Output format (use exactly this)
+
+Group findings by severity, then by file. Each finding cites `path:line` and the violated rule.
+
+```
+## [BLOCKER]
+- <path>:<line> — <rule short name> (<rule file>)
+  Issue: <one sentence>
+  Fix:   <concrete change>
+
+## [MAJOR]
+...
+
+## [MINOR / NIT]
+...
+
+## Summary
+- Blockers: <n>
+- Majors:   <n>
+- Minors:   <n>
+- Verdict:  <APPROVE | REQUEST CHANGES | COMMENT>
+```
+
+If everything passes: `Code review: clean. Verdict: APPROVE.`
+
+---
+
+## §1 Layered architecture (BLOCKERS — see `architecture-principles.mdc`, `services-layer.mdc`, `repositories-layer.mdc`, `fastapi-routers.mdc`)
+
+- [ ] No `app/api/**` file imports `app.repositories.*`, `app.integrations.*`, `app.workers.*`, or any ORM model directly.
+- [ ] No `app/services/**` file imports `fastapi.*`, `Request`, `Response`, `BackgroundTasks`, or raises `HTTPException`.
+- [ ] No `app/services/**` file reads `request.headers`, `request.cookies`, or `os.getenv` directly. Settings are injected.
+- [ ] No `app/repositories/**` file calls `.commit()`, `.rollback()`, or imports another repository. Returns entities/DTOs, never `Row`/`RowMapping`.
+- [ ] No `app/integrations/**` file imports services or repositories.
+- [ ] `app/models/**` contains **only** ORM models + mixins. No business logic, no I/O.
+- [ ] `app/schemas/**` contains **only** Pydantic models. No DB calls, no business decisions, no `from_attributes=True` on **request** DTOs.
+- [ ] Composition root is `app/core/container.py` + `app/api/deps.py`. No `from app.X import some_singleton` anywhere else.
+
+## §2 Dependency Injection (BLOCKERS — see `dependency-injection.mdc`)
+
+- [ ] Every collaborator (repo, cache, events, email, clock, http client, translator) is injected via constructor or `Depends`.
+- [ ] Every external collaborator is a `Protocol` (or `ABC`), not a concrete class import.
+- [ ] No module-level singletons used inside services / handlers (only inside `core/container.py` factories).
+- [ ] No `Depends(get_db)` inside a service — repos own sessions; services receive the repo.
+- [ ] FastAPI dependencies are typed as `Annotated[Type, Depends(...)]` (never bare default arguments).
+- [ ] Override path is wired: every `Depends(...)` factory has a corresponding `dependency_overrides` hook reachable from tests.
+
+## §3 SOLID / DRY / KISS / YAGNI (MAJOR — see `architecture-principles.mdc`)
+
+- [ ] **SRP**: classes / modules have one reason to change. A service that talks to two unrelated aggregates → split.
+- [ ] **OCP**: extension via Protocol + DI, not by modifying existing code paths.
+- [ ] **LSP**: subtypes don't change preconditions / postconditions. No "throws on some subclasses, returns on others".
+- [ ] **ISP**: Protocol surface is small. A 12-method "Repository" Protocol used by one method = split.
+- [ ] **DIP**: high-level depends on abstraction, not on concrete adapter (httpx client, smtp client).
+- [ ] **DRY**: extract on the **third** occurrence; not the second.
+- [ ] **KISS**: when in doubt, write the boring version. Reject premature meta-programming.
+- [ ] **YAGNI**: no "framework" code, no plugin systems, no abstract bases without two concrete users.
+
+## §4 Domain modeling & exceptions (BLOCKERS — see `domain-exceptions.mdc`, `services-layer.mdc`)
+
+- [ ] Services raise `DomainError` subclasses with stable `code` + gettext-key `message`. No `HTTPException` outside the global handler.
+- [ ] `DomainError.code` is locale-independent and stable (`errors.user.email_already_taken`); `message` is the gettext key with named params.
+- [ ] No business decisions live in routers, schemas, or repositories.
+- [ ] Domain invariants are enforced **inside** the aggregate boundary, not by the caller.
+- [ ] Use cases are named after the action, not CRUD (`mark_invoice_paid`, not `update_invoice`).
+
+## §5 Pydantic v2 (MAJOR — see `pydantic-v2.mdc`)
+
+- [ ] Every request schema sets `model_config = ConfigDict(extra="forbid")`.
+- [ ] `model_config: ClassVar[ConfigDict] = ConfigDict(...)` (typed) — not `class Config:` (v1).
+- [ ] Validators use `@field_validator` / `@model_validator`, not `@validator` / `@root_validator`.
+- [ ] No `.dict()` / `.json()` / `parse_obj` / `from_orm`. Use `.model_dump()` / `.model_dump_json()` / `model_validate*`.
+- [ ] `Annotated[type, Field(...)]` for constraints; `examples=` provided for OpenAPI.
+- [ ] `from_attributes=True` only on response DTOs that read ORM rows; never on requests.
+- [ ] `SecretStr` for secrets in `Settings`. `.get_secret_value()` is called at use-site only.
+
+## §6 SQLAlchemy 2.0 / async (BLOCKER — see `sqlalchemy-async.mdc`)
+
+- [ ] Models use `Mapped[...]` + `mapped_column(...)`. No legacy `Column(...)` declarations.
+- [ ] `MetaData(naming_convention=...)` is applied; no migration bypasses it.
+- [ ] All sessions are `AsyncSession`; engines are `create_async_engine`. No sync `create_engine` on the request path.
+- [ ] Queries use `select(...)` + `await session.execute(...)`. No `Session.query(...)`.
+- [ ] No N+1: `.options(selectinload(...))` / `joinedload(...)` for relationship loads accessed in the same request.
+- [ ] No `lazy="dynamic"` / `lazy="select"` on relationships read in async context unless via `await session.run_sync(...)`.
+- [ ] Repository owns the session; service composes UoW (`async with uow: ...`). Repo does not commit.
+
+## §7 Alembic migrations (BLOCKER — see `alembic-migrations.mdc`)
+
+- [ ] One migration per model change, in the **same PR** as the model.
+- [ ] **Backward-compatible**: old image keeps booting against the new schema. Add → backfill → switch → drop, across releases.
+- [ ] Filename includes ticket ID + slug; description matches the change.
+- [ ] `downgrade()` is implemented (staging only); both directions tested locally.
+- [ ] Naming convention preserved.
+- [ ] Large data migrations are **not** in DDL files — they are Celery tasks or one-shot Render jobs.
+- [ ] `CREATE INDEX CONCURRENTLY` for hot tables (raw `op.execute(...)`).
+
+## §8 Async correctness (BLOCKER — see `async-patterns.mdc`)
+
+- [ ] No `requests` / `urllib3` / `psycopg2` / `time.sleep` / blocking I/O on the request path. Use `httpx` / `asyncpg` / `asyncio.sleep`.
+- [ ] No bare `asyncio.run(...)` inside FastAPI handlers.
+- [ ] CPU-bound work in services → offloaded via `run_in_executor` or moved to a Celery task.
+- [ ] Concurrent fan-out uses `asyncio.TaskGroup` (3.11+) with explicit cancellation handling, not bare `gather`.
+- [ ] Cancellation: `asyncio.CancelledError` is re-raised, not swallowed.
+
+## §9 Modern Python typing (MAJOR — see `python-modern.mdc`, `code-quality.mdc`)
+
+- [ ] `X | None` not `Optional[X]`; `list[X]` not `List[X]`; `dict[K, V]` not `Dict[K, V]`.
+- [ ] `Annotated[type, ...]` for metadata-bearing types.
+- [ ] No `Any` without an inline justification comment.
+- [ ] All public functions / methods are typed (mypy strict passes).
+- [ ] Generics use the modern syntax (`def f[T](x: T) -> T:` if Python 3.12+ syntax is approved by repo policy, else `TypeVar`).
+- [ ] No implicit `Optional` (`def f(x: int = None)` is rejected).
+
+## §10 Settings / config (BLOCKER — see `pydantic-settings.mdc`, `environment-config.mdc`)
+
+- [ ] Single `Settings` in `app/core/config.py` with nested `BaseModel` groups.
+- [ ] `SecretStr` for every credential.
+- [ ] **Every** new field has a matching entry in `.env.example` (CI drift check).
+- [ ] No `os.getenv(...)` outside `core/config.py`.
+- [ ] Fail-fast validation at startup (`Settings()` raises before app accepts traffic).
+
+## §11 Domain events (BLOCKER — see `domain-events.mdc`)
+
+- [ ] Event name is a past-tense fact (`UserRegistered`), never a command.
+- [ ] Event is immutable (frozen dataclass / Pydantic `frozen=True`).
+- [ ] Required envelope: `event_id` (UUID), `occurred_at` (UTC), `aggregate_type`, `aggregate_id`, `schema_version`.
+- [ ] Published **after** UoW commit (never inside `async with session.begin():`).
+- [ ] No `locale` field on the event payload — `EventPublisher.publish(..., locale=...)` forwards it as a Celery kwarg.
+- [ ] Each event has a registered handler in `app/events/registry.py`.
+- [ ] `event_id` is the Celery `task_id` for at-most-once dedupe at the broker.
+
+## §12 Celery tasks / Beat (BLOCKER — see `celery-tasks.mdc`, `celery-beat.mdc`)
+
+- [ ] `@celery_app.task(name="<context>.<action>", acks_late=True, max_retries=...)`.
+- [ ] **Primitive args only** (IDs, not ORM objects, not Pydantic models).
+- [ ] Body is **idempotent** — re-running with the same args yields the same final state.
+- [ ] DI container is reused (`get_*_service`); no duplicated wiring.
+- [ ] Retry policy: `autoretry_for=(SpecificError,)`, `retry_backoff=True`, `retry_backoff_max`, `retry_jitter=True`. Permanent failures route to DLQ.
+- [ ] Scheduled tasks wrap their body in a Redis `SET NX EX` lock keyed by `task_name + window`. Multi-Beat-replica safe.
+- [ ] `locale`, if needed, is a **separate kwarg**, not embedded in payload.
+- [ ] No hardcoded user-visible strings inside tasks.
+
+## §13 Caching / Redis (MAJOR — see `cache-redis.mdc`)
+
+- [ ] Cache keys are versioned and namespaced (`v1:user:<id>`); never include unbounded user input.
+- [ ] TTL set on every key; no infinite caches.
+- [ ] Cache-aside pattern: read-through, write-through only with stampede protection (single-flight or `SET NX`).
+- [ ] Idempotency-Key handling stores response hash + body for the documented TTL.
+- [ ] Distributed locks set both `EX` (TTL) and a unique token for safe `DEL`.
+
+## §14 HTTP client / integrations (MAJOR — see `http-client.mdc`)
+
+- [ ] `httpx.AsyncClient` is **constructed once** (via container) and reused — never per-request.
+- [ ] `tenacity` retry policy declared (max attempts, exponential backoff, jitter, retry on connect/read errors only).
+- [ ] Outbound timeouts are explicit (`timeout=Timeout(connect=…, read=…, write=…, pool=…)`).
+- [ ] Circuit breaker / bulkhead for high-blast-radius dependencies.
+- [ ] **No** `verify=False` anywhere.
+- [ ] Errors raised by integrations are translated into domain errors at the service boundary.
+
+## §15 Email (MAJOR — see `email-integration.mdc`, `i18n-l10n.mdc`)
+
+- [ ] Service depends on `EmailSender` Protocol; never imports `aiosmtplib` directly.
+- [ ] `send_template(..., locale=...)` is called with an **explicit** locale.
+- [ ] Templates exist under `app/templates/email/<id>/<locale>/{subject.txt,body.html,body.txt}` for **every** locale in `LOCALES_ENABLED`.
+- [ ] HTML emails set `dir="rtl"` for RTL locales via `Translator.is_rtl(locale)` — never hardcoded.
+- [ ] Tests use `NullEmailSender` (unit) or MailHog (integration); never live SMTP.
+
+## §16 i18n / l10n (BLOCKER — see `i18n-l10n.mdc`)
+
+- [ ] No hardcoded user-visible strings (English **or** Arabic) in routers, services, schemas, or templates.
+- [ ] All formatting goes through `Translator.format_*` for user-visible numbers, dates, currencies.
+- [ ] No `if locale == "ar":` (or any locale) branches in `app/services/**`, `app/repositories/**`, `app/integrations/**`.
+- [ ] Plurals via `ngettext` — never `if n == 1:`. Arabic catalog has all 6 CLDR plural forms when used.
+- [ ] `error.code` is **not** translated; only `error.message`.
+- [ ] New keys present in `messages.pot` and translated for every locale in `LOCALES_ENABLED`. `make i18n-check` would pass.
+
+## §17 Logging (MAJOR — see `logging-structlog.mdc`)
+
+- [ ] Structured logs only (`structlog.get_logger(...)`); no `print`, no f-string-only `.info(...)`.
+- [ ] Required fields on the request path: `request_id`, `user_id` (when authenticated), `route`, `status`, `duration_ms`, `locale`.
+- [ ] Required fields on Celery: `task_id`, `task_name`, `attempt`, `duration_ms`.
+- [ ] No PII / secrets in log payloads. Redactor unchanged.
+- [ ] Correct level: `DEBUG` for dev verbosity, `INFO` for state transitions, `WARNING` for handled-but-noteworthy, `ERROR` for failures, `EXCEPTION` only inside `except:`.
+
+## §18 Observability — metrics + tracing (MAJOR — see `observability.mdc`)
+
+- [ ] Each new significant operation has a Prometheus metric with **bounded** label cardinality (no user-id labels).
+- [ ] OpenTelemetry span wraps the operation; span attributes use semantic conventions (`db.system`, `http.method`, etc.).
+- [ ] Histogram buckets chosen for the SLO of the operation (don't use the default).
+- [ ] `/health` is liveness only (process up); `/ready` checks DB + Redis + downstream health.
+- [ ] Sentry tag set with `environment`, `release`, `request_id` (HTTP), `task_id` (Celery).
+
+## §19 Testing (BLOCKER — see `testing-pytest.mdc`, `test-factories-seeders.mdc`)
+
+- [ ] Markers used correctly: `unit`, `integration`, `api`, `contract`, `smoke`. No marker-less tests.
+- [ ] Unit tests use **fakes** for collaborators (constructor injection makes this trivial).
+- [ ] Integration tests use the **isolated** test stack (`docker-compose.test.yml`); `conftest.py` guardrail untouched.
+- [ ] No inline literal data — use `tests/factories/*Factory` and `tests/seeders/`.
+- [ ] No `if APP_ENV == "test":` branches in `app/`.
+- [ ] No assertions on translated copy. Assert on `error.code`, `Content-Language`, structured fields.
+- [ ] Each new service method has at least one happy-path + one error-path unit test.
+- [ ] Async tests use `pytest.mark.asyncio` (or auto mode); no event-loop leakage between tests.
+
+## §20 Code quality gates (BLOCKER — see `code-quality.mdc`)
+
+- [ ] mypy strict passes — no new `# type: ignore` without justification comment.
+- [ ] Ruff + Black clean.
+- [ ] No commented-out code, no `print`, no untracked `TODO`s (must link a ticket).
+- [ ] Docstrings (Google-style) on public service / repository / `app/core/*` APIs.
+- [ ] Conventional Commit subject (≤ 72 chars, imperative).
+
+## §21 Project artifacts (MAJOR)
+
+- [ ] `.env.example` updated when env vars change.
+- [ ] OpenAPI diff (`make openapi`) reviewed — only the expected routes/schemas changed.
+- [ ] ADR added in `docs/architecture-decisions/NNNN-title.md` for any irreversible decision (new persistence engine, replaced auth scheme, new top-level dependency).
+- [ ] Runbook updated if deploy or incident-response surface changes.
+- [ ] Spec (`docs/tech-architecture-requirements.md`) updated for tech-stack or hard-rule changes.
+- [ ] No new top-level dependency without ADR + spec §2 update + lockfile commit.
+
+## Banned patterns (auto-blocker if present)
+
+| Pattern | Reason |
+|---|---|
+| `from app.repositories... import` inside `app/api/` | Layer violation |
+| `from fastapi import` inside `app/services/` or `app/repositories/` | Layer violation |
+| `raise HTTPException` inside `app/services/` | Domain exceptions only |
+| `Session.query(...)` | Legacy SQLAlchemy 1.x |
+| `.dict()` / `.json()` / `parse_obj` / `from_orm` | Pydantic v1 |
+| `class Config:` inside Pydantic models | Pydantic v1 |
+| `if APP_ENV == "test":` inside `app/` | Test branching in business code |
+| `os.getenv(...)` outside `core/config.py` | Settings bypass |
+| `requests.` / `urllib3.` import on request path | Sync I/O |
+| `time.sleep(` on async path | Blocking |
+| `verify=False` on `httpx` | TLS bypass |
+| `eval(` / `exec(` / `pickle.loads(` on user input | Unsafe |
+| `print(` in `app/` | Use structlog |
+| `# type: ignore` without justification | Mypy escape hatch |
+| `commit()` inside `app/repositories/` | UoW violation |
+| `if locale == "ar":` in business code | Locale branching outside catalogs |
+| `f"...{user_string}..."` returned to a user | Hardcoded user-visible string |
+| `locale=` field on a dataclass in `app/events/types.py` | Locale on event payload |
+| `Depends(get_db)` inside `app/services/` | Wrong DI shape |
+
+## When in doubt
+
+- Default to the **simpler** option (KISS).
+- Default to **explicit** dependency injection.
+- If a guideline conflicts with a `.mdc` rule, **the rule wins** — flag it as a blocker.
+- If the spec is silent, raise it as an open question in the review rather than guessing.

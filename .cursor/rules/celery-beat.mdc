@@ -1,0 +1,87 @@
+---
+description: Celery Beat singleton + Redis distributed lock per scheduled task — multi-server agnostic.
+globs: app/workers/beat_schedule.py,app/workers/celery_app.py
+alwaysApply: false
+---
+
+# Celery Beat — Single scheduler, no overlap, multi-server agnostic
+
+## The problem
+
+Production runs many API replicas and many Celery workers. **Scheduled work must run exactly once per tick**, and **two workers must never execute the same cron body concurrently** (overlap protection for long-running jobs).
+
+## The two-layer guarantee
+
+### Layer 1 — exactly one Beat process
+
+- **Render service:** dedicated **Background Worker** with `numInstances: 1`, start command `celery -A app.workers.celery_app beat ...`, `SERVICE_ROLE=beat`.
+- API services (`SERVICE_ROLE=web`) and worker services (`SERVICE_ROLE=worker`) **must not** start Beat.
+- Optional: **RedBeat** scheduler (`CELERY_BEAT_SCHEDULER=redbeat.RedBeatScheduler`) stores schedule in Redis (stateless on disk). Useful for ops; **does not** replace Layer 2.
+
+### Layer 2 — Redis distributed lock per task body (defense in depth)
+
+Even with one Beat, **the next tick can fire while the previous run is still executing**. And misconfig may run two Beats. Locks fix both.
+
+```python
+@celery_app.task(name="reports.daily_summary", acks_late=True, soft_time_limit=240)
+def daily_summary() -> None:
+    window = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0).isoformat()
+    lock_key = f"{settings.celery.cron_lock_prefix}:reports.daily_summary:{window}"
+    redis = get_redis_sync()
+    if not redis.set(lock_key, "1", nx=True, ex=settings.celery.cron_lock_ttl_seconds):
+        log.info("cron.skipped", task="reports.daily_summary", window=window)
+        return
+    try:
+        asyncio.run(_run_daily_summary())
+    finally:
+        # Lock auto-expires; explicit delete only if you want immediate next-tick eligibility.
+        pass
+```
+
+## Hard rules
+
+- ❌ NEVER schedule via Render Cron Jobs **and** Beat for the same logical task — pick one.
+- ❌ NEVER let a scheduled task run without a lock. Even cheap ones must lock to keep behavior consistent.
+- ❌ NEVER set `CELERY_BEAT_SCHEDULE_FILENAME` in production — Beat is a fresh process; persistence is harmful in containers.
+- ❌ NEVER lock with a TTL **shorter** than the task's max runtime — pick `TTL ≥ soft_time_limit + 30s`.
+
+## Schedule shape
+
+```python
+# app/workers/beat_schedule.py
+from celery.schedules import crontab
+
+beat_schedule = {
+    "reports.daily_summary": {
+        "task": "reports.daily_summary",
+        "schedule": crontab(hour=2, minute=0),
+        "options": {"queue": "slow", "expires": 60 * 30},  # drop if not started in 30m
+    },
+    "events.replay_dlq": {
+        "task": "events.replay_dlq",
+        "schedule": 600.0,  # every 10 minutes
+        "options": {"queue": "default", "expires": 540},
+    },
+}
+```
+
+- Always include `expires` so a delayed Beat run doesn't enqueue a backlog.
+- Always set `queue` explicitly — don't use the default queue for cron work mixed with user-triggered tasks.
+
+## Lock key format
+
+`{CELERY_CRON_LOCK_PREFIX}:{task_name}:{window_key}`
+
+- `window_key` is a stable string for the current tick — e.g. ISO hour for an hourly cron, ISO date for daily, or `floor(now / interval)` for arbitrary intervals.
+- Two ticks of the same task get **different** keys; two replicas of the same tick get the **same** key.
+
+## Observability
+
+- Log every cron skip at INFO with `task`, `window`, `reason="lock_held"`.
+- Metric: `celery_cron_lock_skipped_total{task="..."}` counter.
+- Alert: a task that **always** skips (lock never acquired) suggests a stuck previous run.
+
+## Testing
+
+- Unit: call the task body twice in a row; assert second call returns early.
+- Integration: schedule against a test Beat with `CELERY_TASK_ALWAYS_EAGER=true` is **not** sufficient (Beat is bypassed); use a short-lived real Beat process in CI when validating schedule definitions.

@@ -1,0 +1,252 @@
+---
+description: Security reviewer rubric — authn/z, secrets, SQLi/SSRF/IDOR, container hardening, dependency CVEs, supply chain, audit logging, GDPR. Apply alongside code-review.mdc.
+globs: app/**/*.py,docker/**/*,Dockerfile,docker-compose*.yml,bitbucket-pipelines.yml,render.yaml,alembic/**/*,pyproject.toml,uv.lock,.env.example,.pre-commit-config.yaml
+alwaysApply: false
+---
+
+# Security Reviewer
+
+Authoritative rubric for **security** review. Pair with `code-review.mdc` (technical correctness) for full coverage.
+
+> **Stack lock:** Python 3.14+, FastAPI 0.136+, Pydantic v2, SQLAlchemy 2.0+ (asyncpg), Redis 8+, Celery 5.6+, structlog, OpenTelemetry, httpx, **python-jose** (JWT), **passlib[bcrypt]**, **slowapi**, **pip-audit / bandit / detect-secrets / trivy** in CI. Spec: `docs/tech-architecture-requirements.md` §12 (Security).
+
+## Severity ladder
+
+- **[CRITICAL]** — exploitable now: secret in repo, `eval` on user input, missing auth on a write endpoint, SQL string interpolation on user input, `verify=False`, container running as root, broken JWT verification, IDOR. Block merge **and** trigger incident response if the branch ran in CI.
+- **[HIGH]** — exploitable with a small condition: missing rate limit on auth, weak bcrypt cost, CORS wildcard with credentials, missing security header, raw SQL via f-string with parameter coverage but no allowlist, log statement that prints request body, vulnerable transitive dep with no upgrade path. Block merge.
+- **[MEDIUM]** — missing defense-in-depth: missing audit log for a sensitive action, no idempotency on a POST that effects money, missing CSP on a non-API route, weak rate-limit threshold, retention policy unset, OpenTelemetry span leaking PII attributes. Request changes.
+- **[LOW / NIT]** — hardening recommendations: prefer `RS256` over `HS256` once KMS is available, recommend HSTS preload, recommend bumping retry-after, etc. Comment.
+
+## Output format
+
+```
+## [CRITICAL]
+- <path>:<line> — <issue title> (<rule file or CWE>)
+  Risk: <one sentence on impact + likelihood>
+  Fix:  <concrete change>
+  Ref:  <CWE / OWASP / spec section>
+
+## [HIGH]
+...
+
+## [MEDIUM]
+...
+
+## [LOW / NIT]
+...
+
+## Summary
+- Critical: <n>
+- High:     <n>
+- Medium:   <n>
+- Low:      <n>
+- Verdict:  <APPROVE | REQUEST CHANGES | BLOCK + ESCALATE>
+```
+
+If clean: `Security review: clean. Verdict: APPROVE.`
+
+---
+
+## §1 Authentication (CRITICAL — see `security.mdc`, spec §12.1)
+
+- [ ] JWT verification uses `python-jose` with **explicit** `algorithms=[settings.jwt_algorithm]`. **Never** pass `algorithms=None` or accept `alg: none`.
+- [ ] If `HS256`: secret is `SecretStr` from settings, never logged, ≥ 256 bits of entropy.
+- [ ] If `RS256`: public key pinned; private key only in worker that issues tokens.
+- [ ] Token claims validated: `iss`, `aud`, `exp`, `nbf`, `iat`, optional `jti` for revocation.
+- [ ] Access token TTL ≤ 60 minutes.
+- [ ] Refresh tokens **rotate** on each use; previous refresh is revoked. Reuse of an old refresh = revoke entire family + alert.
+- [ ] Login endpoint uses constant-time comparison (`hmac.compare_digest`) for any pre-bcrypt checks.
+- [ ] Password verification via `passlib.context.CryptContext`; cost factor ≥ **12** for bcrypt; argon2 acceptable with documented params.
+- [ ] No "remember me" cookie without explicit secure attributes (`Secure`, `HttpOnly`, `SameSite=Lax` minimum, `Strict` preferred for state-changing).
+- [ ] No `decode_jwt` call inside services — auth happens at the dependency layer (`Depends(get_current_user)`).
+
+## §2 Authorization (CRITICAL — see `security.mdc`)
+
+- [ ] Every state-changing route declares an auth dependency. Public routes are explicitly marked.
+- [ ] `Depends(require_scopes("..."))` (or equivalent) — no inline `if user.role == "admin":` checks in handlers.
+- [ ] Object-level authz (IDOR): every fetch of a resource by ID checks ownership / tenant before returning.
+- [ ] Admin-only endpoints require `is_admin=True` **and** a stricter rate limit, **and** an audit log entry.
+- [ ] Multi-tenancy: queries are scoped by `tenant_id` at the repository layer; no cross-tenant joins without explicit `bypass_tenant_filter` flag.
+- [ ] Authorization decisions are **deny by default**. Missing scope → 403, not 200.
+
+## §3 Input validation (HIGH — see `pydantic-v2.mdc`, `security.mdc`)
+
+- [ ] All bodies validated via Pydantic with `extra="forbid"`. No raw `dict` accepted from clients.
+- [ ] Path / query params constrained via `Annotated[..., Field(..., max_length=, ge=, le=, pattern=)]`.
+- [ ] String inputs that flow into filenames / headers / URLs are stripped of control chars and validated against an allowlist regex.
+- [ ] File uploads: max size enforced at proxy + app layer; content-type allowlist; magic-byte sniffing for security-sensitive files.
+- [ ] No mass-assignment: never `Model(**request.model_dump())` for user-modifiable subset; explicit field copy.
+- [ ] Polymorphic / discriminated unions explicitly enumerated; no `Type[BaseModel]` accepted from input.
+
+## §4 Output handling (HIGH)
+
+- [ ] Every route declares `response_model=...`. ORM objects never escape the service layer.
+- [ ] No leakage of internal IDs the requester shouldn't see (sequential IDs of other tenants, internal user UUIDs).
+- [ ] Error responses use the documented envelope; do **not** include stack traces, SQL fragments, or internal exception messages in production.
+- [ ] `error.code` is stable and locale-independent; `error.message` is translated; `error.details` never leaks PII or hashed credentials.
+- [ ] No raw HTML rendered from user input (FastAPI is JSON-only by default; verify Jinja templates if introduced — autoescape on).
+
+## §5 SQL injection / data layer (CRITICAL — see `sqlalchemy-async.mdc`)
+
+- [ ] All queries use SQLAlchemy `select(...)` / `insert(...)` / `update(...)` with bound parameters.
+- [ ] Raw SQL **only** via `text("... :param")` with `.bindparams(...)`; reviewer comment justifying necessity.
+- [ ] No f-string / `%`-format / `+` concatenation building SQL fragments anywhere.
+- [ ] `ORDER BY` and column names from user input go through an allowlist; never reflect a raw user string into SQL identifiers.
+- [ ] Mass `IN (...)` lookups use `select(...).where(col.in_(...))` not `f"IN ({','.join(values)})"`.
+- [ ] LIKE patterns from user input have `%` and `_` escaped or are bounded to a small alphabet.
+
+## §6 Server-side request forgery (HIGH — see `http-client.mdc`)
+
+- [ ] Outbound URLs from user input are validated against an **allowlist** of hosts/schemes; resolved IP must not be in private/loopback/link-local ranges (RFC1918, 169.254/16, etc.).
+- [ ] `httpx` redirects are bounded (`max_redirects=...`) and follow validated only.
+- [ ] Webhook delivery (if any) signs payloads (HMAC) and **never** follows arbitrary redirects.
+- [ ] No URL fetches that resolve to `metadata.google.internal`, `169.254.169.254`, or `localhost`.
+
+## §7 Secrets management (CRITICAL — see `security.mdc`, `pydantic-settings.mdc`)
+
+- [ ] Every secret in `Settings` typed as `SecretStr`; `.get_secret_value()` only at use-site.
+- [ ] No secrets in code, in commit messages, or in test fixtures. `detect-secrets` baseline up to date.
+- [ ] No secrets in container images (`docker history` clean). Build args are not used for secrets.
+- [ ] No secrets in logs. Structlog redactor masks: `*_KEY`, `*_SECRET`, `password`, `token`, `authorization`, `cookie`, `set-cookie`, `x-api-key`, JWT-shaped strings.
+- [ ] No secrets in OpenTelemetry span attributes or Sentry breadcrumbs (PII processor configured).
+- [ ] Render env vars set as **secret** (not plain) for production; rotation runbook present in `docs/runbooks/rotate-secret.md`.
+- [ ] No secrets in error messages returned to clients.
+
+## §8 Cryptography (HIGH)
+
+- [ ] No custom KDF / cipher / MAC. Use `passlib`, `cryptography`, `python-jose`, `secrets`.
+- [ ] `secrets.token_urlsafe(32)` (or larger) for any token / nonce; never `random.*` or `uuid.uuid4` for security-sensitive randomness.
+- [ ] HMAC verification uses `hmac.compare_digest`.
+- [ ] No homemade encryption / signing. AES-GCM via `cryptography`; key wrapping via KMS in production.
+- [ ] If symmetric encryption is added: key versioning, key rotation runbook, IV/nonce uniqueness invariant documented.
+
+## §9 CORS / Trusted hosts / TLS (HIGH — see `security.mdc`)
+
+- [ ] `APP_CORS_ORIGINS` is an explicit allowlist; **no `*`** in production. Wildcard + `allow_credentials=True` is **CRITICAL**.
+- [ ] `TrustedHostMiddleware` configured with `APP_TRUSTED_HOSTS` in production.
+- [ ] All outbound `httpx` calls verify TLS (`verify=True`, the default). `verify=False` anywhere = CRITICAL.
+- [ ] HSTS header in production responses (`Strict-Transport-Security: max-age=31536000; includeSubDomains`).
+- [ ] HTTP → HTTPS redirect at the edge (Render terminator); app behind it sees `X-Forwarded-Proto`.
+
+## §10 Security headers (MEDIUM — see `security.mdc`)
+
+- [ ] `X-Content-Type-Options: nosniff`
+- [ ] `X-Frame-Options: DENY` (or CSP `frame-ancestors 'none'`)
+- [ ] `Referrer-Policy: no-referrer`
+- [ ] `Permissions-Policy: ()` (deny by default)
+- [ ] `Content-Security-Policy` strict on `/docs`; project-tuned otherwise. No `unsafe-inline` / `unsafe-eval`.
+- [ ] `Cache-Control: no-store` on authenticated responses with sensitive bodies.
+
+## §11 Rate limiting (HIGH — see `security.mdc`)
+
+- [ ] Global default applied (`slowapi`, Redis-backed). Stricter on auth endpoints.
+- [ ] Login / password-reset / token endpoints: rate-limited **by IP and by username** to defeat credential stuffing.
+- [ ] 429 responses include `Retry-After`.
+- [ ] Account lockout (or progressive backoff) for repeated failed login on a single account.
+- [ ] Rate limit keys never include unbounded user input (memory blow-up).
+
+## §12 Cookies / sessions (HIGH — only if cookie auth is used)
+
+- [ ] Cookies set with `Secure`, `HttpOnly`, `SameSite=Lax` (`Strict` for state change).
+- [ ] No long-lived cookies for auth — use refresh-token rotation (§1).
+- [ ] CSRF protection on cookie-authed state-changing endpoints (double-submit cookie or origin check). Not needed for `Authorization: Bearer` flows.
+- [ ] Logout clears cookies **and** revokes the refresh-token family server-side.
+
+## §13 Container / image hardening (CRITICAL — see `docker.mdc`, `security.mdc`)
+
+- [ ] Final image runs as **non-root** `app` user. Running as root = CRITICAL.
+- [ ] Multi-stage build; runtime stage has no compiler / shell tools / `apt` cache.
+- [ ] Base image pinned to a digest in production; updated weekly.
+- [ ] No secrets in build args; `--mount=type=secret` only when strictly required.
+- [ ] `.dockerignore` excludes `.git`, `tests/`, `docs/`, `.env*`, dotfiles.
+- [ ] `HEALTHCHECK` declared; Docker Compose `depends_on` waits for healthy.
+- [ ] Read-only root filesystem in production where possible (`--read-only` + `tmpfs:/tmp`).
+- [ ] Linux capabilities dropped (`cap_drop: [ALL]`); `no-new-privileges:true`.
+- [ ] Image labels carry `org.opencontainers.image.revision`, `version`, `source`.
+
+## §14 Supply chain / dependencies (HIGH — see `code-quality.mdc`, `bitbucket-pipelines.mdc`)
+
+- [ ] `uv.lock` (or equivalent) committed and frozen in CI (`uv sync --frozen`).
+- [ ] `pip-audit` runs in CI; **fail on High** CVEs.
+- [ ] `bandit -r app` runs in CI.
+- [ ] `detect-secrets` pre-commit + CI; baseline does not mask new findings.
+- [ ] Image scanning (Trivy / Grype) in CI; fail on High in app deps and base.
+- [ ] No new top-level dependency without ADR + spec §2 update + license check (no GPL/AGPL leaking into proprietary code).
+- [ ] Pinned major + minor for direct deps; transitive resolved from lockfile.
+- [ ] No use of typo-squat-prone packages without verification (e.g., `python-jose` not `pyjose`).
+- [ ] Renovate / Dependabot enabled with grouped PRs; weekly base-image rebuild scheduled.
+
+## §15 Audit logging (HIGH — see `security.mdc`, `logging-structlog.mdc`)
+
+- [ ] Dedicated audit logger (separate from app logs) emits an entry for: login (success + fail), logout, password change, MFA enroll/disable, role change, scope grant/revoke, admin action, secret rotation, data export, data deletion.
+- [ ] Audit entries include: `actor_id`, `actor_ip`, `target_id`, `action`, `result`, `timestamp_utc`, `request_id`, `correlation_id`. No redacted user IDs.
+- [ ] Audit logs retained longer than app logs and **never sampled**.
+- [ ] Audit logs immutable in production (write-once sink or external collector).
+
+## §16 PII / privacy / GDPR (MEDIUM)
+
+- [ ] Data class registry maintained; PII fields marked at the model level.
+- [ ] PII retention policy documented; default purge < 90 days unless required.
+- [ ] Data export and deletion endpoints (or async tasks) exist for user-requested rights.
+- [ ] PII never appears in OpenTelemetry attributes, Sentry events, or Prometheus labels.
+- [ ] Authenticated cache keys are per-user; no shared cache that could mix tenants.
+- [ ] Email addresses and phone numbers normalized before any equality / dedupe to avoid enumeration via case differences.
+
+## §17 Idempotency / replay (MEDIUM — see `cache-redis.mdc`)
+
+- [ ] Money-moving / side-effect-causing POSTs accept `Idempotency-Key` and dedupe via Redis with documented TTL (≥ 24h typical).
+- [ ] Webhook receivers verify HMAC signature **and** dedupe by `event_id`.
+- [ ] Outbound webhooks signed with `X-Signature` HMAC + timestamp; receiver expected to reject ±5min skew.
+
+## §18 Banned patterns (auto-CRITICAL if present)
+
+| Pattern | CWE / Risk |
+|---|---|
+| `eval(`, `exec(`, `pickle.loads(` on data that touches user input | CWE-94 |
+| `subprocess.*shell=True` with interpolated user input | CWE-78 |
+| `os.system(`, `os.popen(` | CWE-78 |
+| `verify=False` on `httpx.AsyncClient` | CWE-295 |
+| `algorithms=None` or accepting `alg: none` in JWT | CWE-347 |
+| `passlib`-less password handling / hand-rolled hash | CWE-916 |
+| `random.choice` / `uuid.uuid4()` for security tokens | CWE-330 |
+| f-string / `%` / `+` building SQL | CWE-89 |
+| `.format(...)`-built shell commands | CWE-78 |
+| `app.openapi_url=None` removed in prod without `/docs` gate | exposed schema |
+| Logging `request.headers` / `request.body` raw | CWE-532 |
+| Storing JWT in `localStorage` (frontend guidance) | XSS exfil risk |
+| `CORS allow_origins=["*"]` with `allow_credentials=True` | CWE-942 |
+| Hardcoded credentials anywhere | CWE-798 |
+| Running container as `USER root` (or no `USER` directive) | CWE-250 |
+| `verify=False` in any DB / Redis / SMTP client | CWE-295 |
+| `pickle` for cache values | RCE risk |
+| Reading `Authorization:` header inside business logic | leakage |
+| `RNG = random.Random()` for security | CWE-338 |
+
+## §19 Render / deployment surface (HIGH — see `deployment-render.mdc`)
+
+- [ ] Production env vars set as secret in Render dashboard (or via `render.yaml` `sync: false` + dashboard).
+- [ ] `web` service has private network access to managed Postgres + Redis only — no public exposure.
+- [ ] No SSH / shell access to running containers without explicit ops approval.
+- [ ] Deploy hook URL stored as masked Bitbucket repo variable; never echoed in logs.
+- [ ] Sentry release tagging (`sentry-cli releases new $BITBUCKET_COMMIT`) wired post-build.
+- [ ] Production `/docs` and `/openapi.json` either disabled or behind auth.
+
+## §20 Reviewer's escalation triggers
+
+Open a security incident and notify the on-call **before** approving when you find:
+
+1. A leaked secret in any branch, even unmerged.
+2. An auth-bypass / broken JWT verification.
+3. Any RCE primitive (`eval`/`exec`/`pickle`/`subprocess shell=True`) reachable from a request handler.
+4. SQL injection on a real query path.
+5. Production credentials referenced from a non-production environment.
+6. Container running as root in a deployed image.
+7. Plaintext password storage / logging.
+8. CORS wildcard + credentials live in production.
+
+## When in doubt
+
+- **Threat-model the change.** Who is the attacker? What's the asset? Which existing control fails first?
+- **Trust nothing client-supplied.** Even fields you didn't add could carry payload — `extra="forbid"` is your friend.
+- **Defense in depth.** Pydantic + DB constraints + service rule + audit log — every layer holds.
+- **If unsure, ask.** A 5-minute question to the security owner beats a 5-day incident.

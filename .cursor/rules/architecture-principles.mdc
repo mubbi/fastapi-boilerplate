@@ -1,0 +1,59 @@
+---
+description: Layered architecture, SOLID/DRY/KISS/YAGNI, and DI hard rules for the FastAPI boilerplate.
+alwaysApply: true
+---
+
+# Architecture Principles (read first, every session)
+
+Authoritative spec: `docs/tech-architecture-requirements.md`. Quick rules below.
+
+## Layers (strict, top → bottom only)
+
+```
+Router (app/api/**)  →  Service (app/services/**)  →  Repository (app/repositories/**)  →  DB
+                                          ↓
+                              Integration / Adapter (app/integrations/**)
+```
+
+**Hard import rules — review-rejecting:**
+
+- Router NEVER imports `app.repositories.*` or `app.integrations.*`.
+- Service NEVER imports `fastapi.*`, `Request`, `Response`, or raises `HTTPException`.
+- Repository NEVER calls `.commit()`, NEVER imports another repository.
+- Integration NEVER imports services or repositories.
+- User-visible strings are NEVER hardcoded — they go through `Translator` / `_("key")`. See `i18n-l10n.mdc`.
+- Locale lives at the **rendering boundary** (router / listener / template), never in domain/business logic. No `if locale == "ar":` in services.
+
+## SOLID (project-specific)
+
+- **S** — One responsibility per class/module: routers do HTTP, services do business, repos do persistence.
+- **O** — Extend via new `Protocol` implementation; do not edit existing concrete classes.
+- **L** — Every implementation of a `Protocol` passes the same contract test suite.
+- **I** — Split protocols by capability (`Reader`, `Writer`, `HealthCheck`) over a fat interface.
+- **D** — Services depend on `Protocol`s, never on concrete classes; wiring lives in `app/core/container.py`.
+
+## DRY / KISS / YAGNI
+
+- **DRY:** extract only after the **third** occurrence; prefer duplication over the wrong abstraction.
+- **KISS:** no metaclasses, no clever decorators, no magic. Prefer obvious code.
+- **YAGNI:** no empty interfaces "for later", no plugin systems with one plugin, no config knobs without a current user.
+
+## DI (FastAPI-native, no third-party container)
+
+- Composition root: `app/core/container.py` holds `get_*` factory functions.
+- Routers use `Depends(get_*_service)`. Services receive collaborators via `__init__`.
+- Every dep MUST be overridable via `app.dependency_overrides` for tests.
+- No `lru_cache` on per-request-state functions (sessions, request scope).
+
+## Engineering checklist (every PR)
+
+- Type-annotate everything; mypy strict.
+- Async all the way down (no `requests`, no sync DB).
+- No magic strings/numbers — use `app/core/constants.py`.
+- No `if APP_ENV == "test":` in business code.
+- No commented-out code; no TODOs without a ticket ID.
+- Any new user-visible string is added to `messages.pot` in the same PR (`make i18n-extract && make i18n-update`); both `en` and `ar` catalogs translated before merge.
+
+## When unsure
+
+Default to **simpler**, **more explicit**, **fewer abstractions**. If a `.cursor/rules/*.mdc` rule conflicts with generic best practice, the rule wins.

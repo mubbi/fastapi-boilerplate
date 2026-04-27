@@ -1,0 +1,149 @@
+---
+description: Environment files — .env, .env.example, .env.test — and what NEVER goes in source control.
+globs: .env*,app/core/config.py,scripts/setup_env.sh,Makefile,bitbucket-pipelines.yml
+alwaysApply: false
+---
+
+# Environment Configuration
+
+## File contract
+
+| File | Tracked? | Purpose |
+|---|---|---|
+| `.env.example` | ✅ committed | Template with **every** key the app reads. Placeholder values for secrets. |
+| `.env.test` | ✅ committed | Used by tests + CI. Points at `*_test` services on isolated ports. **No real secrets** — generate locally only. |
+| `.env` | ❌ ignored | Local override. Auto-copied from `.env.example` by `make setup ENV=local` if missing. |
+| `.env.production` | ❌ ignored / does not exist | Production env vars come from Render's env var groups, not files. |
+
+## Rules
+
+- ❌ NEVER commit `.env`, `.env.local`, or any file containing real credentials.
+- ❌ NEVER add a setting in `Settings` without also adding it to `.env.example`. CI runs `make check-env` and fails on drift.
+- ❌ NEVER read env vars outside `app/core/config.py` — go through `Settings`.
+- ❌ NEVER use a single `DATABASE_URL` for both dev and test. The two are **separate keys**, separate hosts/ports.
+- ✅ Use `SecretStr` for every credential in `Settings` so it can't be `print`ed accidentally.
+- ✅ Sort `.env.example` by section with comment headers (`# --- Database ---`, etc.).
+- ✅ Document every setting in `.env.example` with a one-line comment above the key.
+
+## Required keys (categories)
+
+```
+# --- App ---
+APP_NAME=fastapi-boilerplate
+APP_ENV=local                       # local | dev | staging | production | test
+APP_VERSION=0.0.0
+APP_DEBUG=false
+APP_DOCS_ENABLED=true               # disable in production unless gated
+APP_CORS_ORIGINS=["http://localhost:3000"]
+APP_TRUSTED_HOSTS=["*"]
+APP_REQUEST_TIMEOUT_SECONDS=30
+APP_GRACEFUL_SHUTDOWN_SECONDS=30
+SECRET_KEY=__change_me__
+
+# --- Service role (production only) ---
+SERVICE_ROLE=web                    # web | worker | beat
+
+# --- Database (dev) ---
+DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app
+DATABASE__POOL_SIZE=10
+DATABASE__MAX_OVERFLOW=20
+
+# --- Database (test) ---
+DATABASE_URL_TEST=postgresql+asyncpg://app:app@postgres_test:5432/app_test
+
+# --- Redis (dev / test) ---
+REDIS_URL=redis://redis:6379/0
+REDIS_URL_TEST=redis://redis_test:6379/0
+
+# --- Celery ---
+CELERY_BROKER_URL=redis://redis:6379/1
+CELERY_RESULT_BACKEND=redis://redis:6379/2
+CELERY_BROKER_URL_TEST=redis://redis_test:6379/1
+CELERY_RESULT_BACKEND_TEST=redis://redis_test:6379/2
+CELERY_WORKER_CONCURRENCY=4
+CELERY_QUEUES=default,events
+CELERY_BEAT_SCHEDULER=celery.beat.PersistentScheduler
+CELERY_CRON_LOCK_PREFIX=cron:lock
+CELERY_CRON_LOCK_TTL_SECONDS=300
+
+# --- Email ---
+EMAIL_ENABLED=true
+EMAIL_PROVIDER=smtp                 # smtp | sendgrid | ses | postmark | null
+EMAIL_FROM_ADDRESS=no-reply@example.com
+EMAIL_FROM_NAME="FastAPI Boilerplate"
+SMTP_HOST=mailhog
+SMTP_PORT=1025
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_USE_TLS=false
+SMTP_USE_STARTTLS=false
+
+# --- Auth / Security ---
+AUTH_ENABLED=false
+JWT_SECRET_KEY=__change_me__
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_TTL_MINUTES=60
+PASSWORD_MIN_LENGTH=12
+
+# --- HTTP client ---
+HTTP_CLIENT__TIMEOUT_SECONDS=10
+HTTP_CLIENT__RETRY_ATTEMPTS=3
+HTTP_CLIENT__RETRY_BACKOFF_BASE=0.2
+HTTP_CLIENT__MAX_KEEPALIVE=50
+HTTP_CLIENT__MAX_CONNECTIONS=200
+
+# --- Observability ---
+LOG_LEVEL=INFO
+LOG_FORMAT=json                     # json | console
+SENTRY_DSN=
+OTEL_EXPORTER_OTLP_ENDPOINT=
+OTEL_TRACES_SAMPLER_ARG=0.1
+METRICS_ENDPOINT_AUTH_TOKEN=
+
+# --- Rate limit ---
+RATE_LIMIT_DEFAULT=100/minute
+RATE_LIMIT_AUTH=10/minute
+
+# --- i18n / l10n (see i18n-l10n.mdc) ---
+LOCALES_ENABLED=["en","ar"]              # JSON list of BCP-47 codes
+LOCALE_DEFAULT=en
+LOCALE_FALLBACK=en
+LOCALE_QUERY_PARAM=lang                  # ?lang=ar override; "" disables this hop
+LOCALE_HEADER_NAME=Accept-Language
+LOCALE_DOMAIN=messages
+LOCALE_DIR=app/locales
+RTL_LOCALES=["ar"]
+LOCALE_TRANSLATION_COMPLETENESS_MIN=0.95 # CI gate
+```
+
+## .env.test extras (mandatory)
+
+```
+APP_ENV=test
+DATABASE_URL=${DATABASE_URL_TEST}
+REDIS_URL=${REDIS_URL_TEST}
+CELERY_BROKER_URL=${CELERY_BROKER_URL_TEST}
+CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND_TEST}
+EMAIL_ENABLED=false                 # NullEmailSender
+CELERY_TASK_ALWAYS_EAGER=true       # synchronous task execution in tests
+SENTRY_DSN=
+LOG_LEVEL=WARNING
+LOG_FORMAT=console
+```
+
+## Production overrides (set in Render env var groups)
+
+- `APP_ENV=production`
+- `APP_DEBUG=false`
+- `APP_DOCS_ENABLED=false` (or gated)
+- `APP_CORS_ORIGINS` set to known domains (no wildcards).
+- `APP_TRUSTED_HOSTS` set to deployed hostnames.
+- `SECRET_KEY`, `JWT_SECRET_KEY` from Render `generateValue: true`.
+- `DATABASE_URL`, `REDIS_URL` from managed addons.
+- `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_ENDPOINT` set.
+- `METRICS_ENDPOINT_AUTH_TOKEN` set.
+
+## Drift detection
+
+- `make check-env` parses `Settings` and the `.env.example` file; fails if any field is missing in the example or if the example contains stale keys.
+- The same script runs in CI on every PR.

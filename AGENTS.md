@@ -1,0 +1,73 @@
+# AGENTS.md
+
+This file is the agent-tool–neutral mirror of [`CLAUDE.md`](CLAUDE.md). Cursor, Codex CLI, and other coding assistants that look for `AGENTS.md` should treat the two files as equivalent — both are kept in sync.
+
+For the full guidance, **read [`CLAUDE.md`](CLAUDE.md)**. For file-scoped, version-specific rules, see [`.cursor/rules/*.mdc`](.cursor/rules) — they apply automatically based on globs in their frontmatter.
+
+## Quick links
+
+- **Architecture spec (authoritative):** [`docs/tech-architecture-requirements.md`](docs/tech-architecture-requirements.md)
+- **Top-level guidance for AI agents:** [`CLAUDE.md`](CLAUDE.md)
+- **File-scoped rules:** [`.cursor/rules/`](.cursor/rules)
+- **Repeatable workflows (Claude Code slash commands):** [`.claude/commands/`](.claude/commands)
+- **Subagents (Claude Code):** [`.claude/agents/`](.claude/agents) — `code-reviewer`, `security-reviewer`
+- **ADRs:** `docs/architecture-decisions/`
+- **Runbooks:** `docs/runbooks/`
+
+## Review before merge
+
+Two independent reviewers gate every PR:
+
+- **Code review** — architecture, DI, Pydantic v2, SQLAlchemy 2.0+ async, modern typing, i18n, testing, code quality.
+  Rubric: [`.cursor/rules/code-review.mdc`](.cursor/rules/code-review.mdc) · Subagent: [`.claude/agents/code-reviewer.md`](.claude/agents/code-reviewer.md) · Slash command: `/review-code`
+- **Security review** — authn/z, secrets, SQLi/SSRF/IDOR, CORS, rate limiting, container hardening, dependency CVEs, audit logging, PII/GDPR.
+  Rubric: [`.cursor/rules/security-review.mdc`](.cursor/rules/security-review.mdc) · Subagent: [`.claude/agents/security-reviewer.md`](.claude/agents/security-reviewer.md) · Slash command: `/review-security`
+
+Cursor users: open the rubrics and prompt `@code-review` / `@security-review` (Cursor will pull the rule into context). Claude Code users: invoke the subagents by name or run the slash commands.
+
+## Single entry for environments
+
+```bash
+make setup ENV=local        # full dev stack (api, worker, beat, postgres, redis, mailhog)
+make setup ENV=test         # isolated test stack (postgres_test, redis_test, mailhog) only
+make setup ENV=production SERVICE_ROLE=web|worker|beat   # used by the container entrypoint on Render
+```
+
+Tests **never** target the dev database — `conftest.py` enforces a guardrail.
+
+## Languages
+
+The boilerplate ships with **English (`en`, default + fallback)** and **Arabic (`ar`, RTL)**. Locale handling is centralized in `app/core/i18n.py`; copy lives in `app/locales/<locale>/LC_MESSAGES/messages.po`. See [`tech-architecture-requirements.md`](docs/tech-architecture-requirements.md) §11 and [`.cursor/rules/i18n-l10n.mdc`](.cursor/rules/i18n-l10n.mdc).
+
+```bash
+make i18n-extract     # rebuild app/locales/messages.pot from sources
+make i18n-update      # merge .pot into every per-locale .po
+make i18n-compile     # .po → .mo (also runs in Docker builder stage)
+make i18n-check       # CI gate: catalogs in sync, completeness ≥ threshold
+make new-locale LOCALE=xx  # initialize a new locale (currently only en/ar are in scope)
+```
+
+The `/new-translation` Claude Code slash command walks through this workflow whenever you add a user-visible string.
+
+## Do / Don't
+
+**Do**
+- Follow the layered architecture and DI hard rules in [`CLAUDE.md`](CLAUDE.md) §2.
+- Add/update tests, factories, and migrations in the same PR as the change.
+- Use modern Python typing (`X | None`, `list[X]`, `Annotated[...]`).
+- Wrap scheduled task bodies in a Redis distributed lock (Beat-singleton-agnostic).
+- Use `EmailSender` Protocol; never call SMTP libraries directly from services. `EmailSender.send_template` takes a `locale` kwarg; templates live under `app/templates/email/<id>/<locale>/`.
+- Wrap **every** user-visible string with `_("key")` / `Translator.gettext`. Translate `messages.po` for both `en` and `ar` in the same PR.
+- Read `request.state.locale` (populated by `get_current_locale`) and pass `locale` as a separate kwarg to Celery tasks that send user-facing notifications.
+
+**Don't**
+- Don't import `fastapi.*` from a service or repository.
+- Don't `commit()` from a repository.
+- Don't return SQLAlchemy ORM objects from a route handler.
+- Don't add `if APP_ENV == "test":` to business code.
+- Don't introduce a new external dependency without an ADR and a §2 update.
+- Don't hardcode user-visible strings (English **or** Arabic) in routers, services, schemas, or templates.
+- Don't add `if locale == "ar":` (or any locale) branches to business code — locale-specific behavior belongs in catalogs and templates.
+- Don't carry `locale` on a domain event payload — events are facts; locale is a rendering concern. Pass it as a Celery task kwarg.
+- Don't translate `error.code` — only `error.message` is translated.
+- Don't read `Accept-Language` directly anywhere except `get_current_locale`.

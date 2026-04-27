@@ -1,0 +1,63 @@
+---
+description: Python 3.14+ idioms, modern typing, async-only, no legacy patterns.
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python 3.14+ Idioms
+
+Target: Python **3.14.4+**. mypy strict. No legacy syntax.
+
+## Typing
+
+- Use `X | None`, **not** `Optional[X]`.
+- Use built-in generics: `list[X]`, `dict[K, V]`, `tuple[X, ...]`, `set[X]`. **Never** `from typing import List, Dict, Tuple, Set`.
+- Use `Annotated[X, Field(...)]` for Pydantic / FastAPI metadata; `Annotated` is the standard place to attach validators, deps, and OpenAPI metadata.
+- Use **PEP 695** generic syntax for new code:
+  ```python
+  def first[T](items: list[T]) -> T | None: ...
+  type UserId = uuid.UUID
+  class Repository[Model]: ...
+  ```
+- Prefer `TypedDict` for structured dicts; `Protocol` for duck-typed interfaces; `dataclass(frozen=True, slots=True)` for immutable value objects.
+- `Literal[...]` for enumerations of constants; `enum.StrEnum` for first-class enums (Python 3.11+).
+
+## Async-only
+
+- All I/O on the request path is async. **No** `requests`, `urllib`, sync `psycopg2`, or `time.sleep()` (use `asyncio.sleep`).
+- Use `asyncio.TaskGroup` (PEP 654) for structured concurrency; never bare `asyncio.gather` without exception handling.
+- Cancellation: catch `asyncio.CancelledError` only to clean up, then re-raise.
+
+## No-no list (review-rejecting)
+
+- ❌ `from typing import Optional, List, Dict, Tuple, Set, Union` — use modern syntax.
+- ❌ Bare `except:` or `except Exception:` without re-raise / logging.
+- ❌ Mutable default arguments.
+- ❌ Magic numbers/strings — define in `app/core/constants.py`.
+- ❌ Module-level side effects (network, DB, file I/O at import time).
+- ❌ `print(...)` for logging — use `structlog`.
+- ❌ `os.getenv(...)` outside `app/core/config.py` — go through `Settings`.
+
+## Style
+
+- Pure functions wherever possible; push side effects to edges.
+- Prefer `match` statements over chained `isinstance`.
+- Use `pathlib.Path`, never raw string paths.
+- Use `datetime.now(tz=UTC)` (PEP 615); never naive datetimes.
+- F-strings for formatting; `t-strings` (PEP 750) for safe templating where applicable in 3.14+.
+
+## Examples
+
+```python
+# ✅ GOOD
+from collections.abc import Iterable
+
+def page[T](items: Iterable[T], size: int) -> list[list[T]]:
+    items = list(items)
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+# ❌ BAD
+from typing import List, Optional
+def page(items, size: int) -> List[List]:  # untyped, legacy generics
+    ...
+```

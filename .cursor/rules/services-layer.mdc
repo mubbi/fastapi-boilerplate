@@ -1,0 +1,85 @@
+---
+description: Service layer pattern — business logic, Unit of Work, no FastAPI imports.
+globs: app/services/**/*.py
+alwaysApply: false
+---
+
+# Services
+
+The only layer that knows what a use case **means**.
+
+## Hard rules
+
+- ❌ NEVER import `fastapi.*`, `Request`, `Response`, or `HTTPException`.
+- ❌ NEVER read environment variables directly — settings come via DI.
+- ❌ NEVER instantiate dependencies inside the service — they are constructor-injected.
+- ❌ NEVER call repositories belonging to a different aggregate; cross-aggregate orchestration is fine via repos this service owns or via events.
+- ❌ NEVER catch exceptions to silently ignore them; map to a `DomainError` or re-raise.
+- ❌ NEVER hardcode user-visible strings (error messages, email subjects, notification copy). Pass a gettext key as `DomainError.message` or call `Translator.gettext(...)` for non-error copy. See `i18n-l10n.mdc`.
+- ❌ NEVER take `locale` as a service-method argument that influences **business logic**. Locale is a rendering concern; pass it to the rendering boundary (handler / listener / template).
+
+## Required shape
+
+```python
+from app.core.clock import Clock
+from app.core.exceptions import NotFoundError, ConflictError
+from app.events.publisher import EventPublisher
+from app.events.types import WidgetCreated
+from app.integrations.cache.base import CacheClient
+
+class WidgetService:
+    def __init__(
+        self,
+        repo: WidgetRepository,
+        cache: CacheClient,
+        events: EventPublisher,
+        clock: Clock,
+    ) -> None:
+        self._repo = repo
+        self._cache = cache
+        self._events = events
+        self._clock = clock
+
+    async def create(self, cmd: CreateWidgetCommand) -> Widget:
+        if await self._repo.exists_by_slug(cmd.slug):
+            raise ConflictError(code="WIDGET_SLUG_TAKEN", message="Slug already in use")
+        widget = Widget.new(cmd, now=self._clock.now())
+        async with self._uow:
+            await self._repo.add(widget)
+            await self._uow.commit()
+        await self._events.publish(WidgetCreated(widget_id=widget.id, occurred_at=self._clock.now()))
+        return widget
+```
+
+## Conventions
+
+- **Public methods = use cases**, not CRUD verbs (`register_user`, not `create_user`).
+- **One service per bounded context** (`UserService`, not `UserCRUDService` + `UserAuthService` for the same aggregate).
+- **Transactions:** owned here. Use an explicit `async with uow:` block. Repositories never commit.
+- **Domain events:** publish **after** commit. Never inside the transaction.
+- **Time:** `Clock` Protocol; never `datetime.utcnow()` directly.
+- **IDs:** generate via `app.utils.ids.new_uuid7()`; never DB auto-increment for app-generated IDs.
+- **Translatable copy:** for **errors**, raise `DomainError(message="key with %(param)s", details={...})` — handler translates. For **notification/email payloads**, attach the user's preferred locale (or resolved request locale) to the published event/task as a kwarg, never on the domain event payload itself (see `domain-events.mdc`).
+
+## Errors
+
+Raise `DomainError` subclasses:
+- `NotFoundError` — entity missing.
+- `ConflictError` — uniqueness, version mismatch.
+- `ValidationError` — domain rule violation (Pydantic catches schema-level issues earlier).
+- `UnauthorizedError` / `ForbiddenError` — auth.
+- `RateLimitedError` — caller exceeded quota.
+- `ExternalServiceError`, `TimeoutError` — adapter failures.
+
+The handler in `app/core/exceptions.py` maps each to a status code + envelope.
+
+## Logging
+
+- Structured logs only. Bind context with `structlog.contextvars.bound_contextvars(user_id=..., widget_id=...)`.
+- Log at INFO for use-case start/finish; ERROR with stack on unhandled paths.
+
+## Testing
+
+- Unit tests with **fakes** for every Protocol — no DB.
+- Use `tests/factories/` to build inputs.
+- Assert on returned domain objects and on outbound calls (event published, email sent) via fakes.

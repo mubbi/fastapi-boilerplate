@@ -1,0 +1,132 @@
+---
+description: Bitbucket Pipelines CI — lint, typecheck, tests against isolated stack, build, deploy gate.
+globs: bitbucket-pipelines.yml,.bitbucket/**/*
+alwaysApply: false
+---
+
+# Bitbucket Pipelines
+
+Single source of truth for "what blocks merge to main".
+
+## Required stages (in order)
+
+1. **Lint & format** — `ruff check`, `ruff format --check`, `black --check`.
+2. **Typecheck** — `mypy app` (strict).
+3. **Security scans** — `pip-audit`, `bandit -q -r app`, `detect-secrets scan`.
+4. **Unit tests** — `pytest -m unit`. No services required.
+5. **Integration + API tests** — start `docker-compose.test.yml`, run `pytest -m "integration or api"`. Tear down.
+6. **Migration round-trip** — fresh Postgres, `alembic upgrade head`, `alembic downgrade -1`, `alembic upgrade head`. Both directions must succeed.
+7. **Drift checks** — `make check-env` (every Settings field has a matching `.env.example` entry); `make openapi` diff is reviewed.
+8. **i18n hygiene** — `make i18n-check`: `messages.pot` is in sync with sources, every catalog compiles, translation completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` for every locale in `LOCALES_ENABLED`. See `i18n-l10n.mdc`.
+9. **Build image** — multi-stage Docker build (catalogs compiled in builder stage), push to registry tagged `<repo>:<git-sha>`.
+10. **Deploy gate** — only on `main`: trigger Render deploy hook (or rely on Render `autoDeploy: true`).
+
+## bitbucket-pipelines.yml (canonical shape)
+
+```yaml
+image: python:3.14-slim
+options:
+  max-time: 30
+definitions:
+  caches:
+    uv: ~/.cache/uv
+  services:
+    postgres-test:
+      image: postgres:18-alpine
+      variables:
+        POSTGRES_DB: app_test
+        POSTGRES_USER: app
+        POSTGRES_PASSWORD: app
+    redis-test:
+      image: redis:8-alpine
+pipelines:
+  default:
+    - parallel:
+        - step:
+            name: Lint
+            script:
+              - pip install uv && uv sync --frozen
+              - uv run ruff check && uv run ruff format --check && uv run black --check .
+        - step:
+            name: Typecheck
+            script:
+              - pip install uv && uv sync --frozen
+              - uv run mypy app
+        - step:
+            name: Security
+            script:
+              - pip install uv && uv sync --frozen
+              - uv run pip-audit
+              - uv run bandit -q -r app
+              - uv run detect-secrets scan --baseline .secrets.baseline
+    - step:
+        name: Tests (unit)
+        script:
+          - pip install uv && uv sync --frozen
+          - uv run pytest -m unit -q
+    - step:
+        name: Tests (integration + api)
+        services: [postgres-test, redis-test]
+        script:
+          - pip install uv && uv sync --frozen
+          - cp .env.test .env
+          - uv run alembic upgrade head
+          - uv run pytest -m "integration or api" -q
+    - step:
+        name: Migration round-trip
+        services: [postgres-test]
+        script:
+          - pip install uv && uv sync --frozen
+          - uv run alembic upgrade head
+          - uv run alembic downgrade -1
+          - uv run alembic upgrade head
+    - step:
+        name: i18n catalog hygiene
+        script:
+          - pip install uv && uv sync --frozen
+          - uv run pybabel extract -F babel.cfg -o /tmp/messages.pot app/
+          - diff -q /tmp/messages.pot app/locales/messages.pot   # fail on drift
+          - uv run pybabel compile -d app/locales/
+          - uv run python scripts/check_i18n_completeness.py     # asserts ≥ LOCALE_TRANSLATION_COMPLETENESS_MIN
+    - step:
+        name: Build image
+        services: [docker]
+        script:
+          - export IMAGE="$REGISTRY/$REPO:$BITBUCKET_COMMIT"
+          - docker build -t "$IMAGE" .
+          - echo "$REGISTRY_TOKEN" | docker login --username "$REGISTRY_USER" --password-stdin
+          - docker push "$IMAGE"
+        only:
+          - branches:
+              - main
+  branches:
+    main:
+      - step:
+          name: Deploy to Render
+          script:
+            - curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+```
+
+## Hard rules
+
+- ❌ NEVER skip a stage with `[skip ci]` or branch-condition gymnastics for a stage that gates merge.
+- ❌ NEVER hardcode secrets in `bitbucket-pipelines.yml`. Use **Repository variables** (Bitbucket → Settings → Repository variables, masked).
+- ❌ NEVER run integration tests against shared infrastructure; always use the `services` block (ephemeral containers per pipeline).
+- ❌ NEVER let `pip install -r requirements.txt` drift from the lock file. Use `uv sync --frozen` (or `pip install -e . --constraint constraints.txt`).
+- ✅ Cache `uv`/`pip` deps across pipeline runs (the `caches` block above).
+- ✅ Set `max-time` per step; default to 30 minutes overall.
+- ✅ Branch protection on `main` requires this pipeline green.
+
+## Required repository variables
+
+- `REGISTRY`, `REGISTRY_USER`, `REGISTRY_TOKEN` (or use Bitbucket's container registry).
+- `RENDER_DEPLOY_HOOK_URL` (masked).
+- `SENTRY_AUTH_TOKEN` (for release upload, masked).
+
+## Sentry release tagging (post-build)
+
+- After successful build, run `sentry-cli releases new $BITBUCKET_COMMIT && sentry-cli releases set-commits --auto $BITBUCKET_COMMIT` so error tracking is tied to the deployed git SHA.
+
+## Custom pipelines
+
+- `pipelines.custom.smoke-prod`: hits `/ready` and a small canary endpoint set against the deployed environment with a token. Run manually after deploy.

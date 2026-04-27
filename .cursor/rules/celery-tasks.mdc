@@ -1,0 +1,109 @@
+---
+description: Celery 5.6+ task patterns — naming, idempotency, primitive args, DLQ, signals, retries.
+globs: app/workers/**/*.py
+alwaysApply: false
+---
+
+# Celery Tasks (5.6+)
+
+## Hard rules
+
+- ❌ NEVER pass ORM objects, Pydantic models, or sessions as task args. **Primitive only** (UUID, int, str, dict).
+- ❌ NEVER call sync I/O inside an async task or vice versa. Pick one and stick to it; prefer sync tasks that delegate to `asyncio.run(...)` only at the boundary.
+- ❌ NEVER define a task without `acks_late=True` and a `max_retries`.
+- ❌ NEVER let a task silently swallow exceptions. Either retry or send to DLQ.
+- ❌ NEVER schedule a task by importing it at module top-level inside a router (causes circular imports).
+- ❌ NEVER include `locale` inside a domain event payload. If a task produces user-facing output, accept `locale: str` as a **separate** primitive kwarg. See `i18n-l10n.mdc` and `domain-events.mdc`.
+- ❌ NEVER hardcode user-visible strings inside a task. Tasks that render copy go through the `Translator` (or render Jinja2 templates that use `{{ _("...") }}`).
+
+## Required shape
+
+```python
+from app.workers.celery_app import celery_app
+
+@celery_app.task(
+    name="widgets.recalculate_score",      # explicit, namespaced
+    acks_late=True,
+    max_retries=5,
+    autoretry_for=(TransientError,),
+    retry_backoff=True,
+    retry_backoff_max=600,                  # cap exponential growth
+    retry_jitter=True,
+    soft_time_limit=240,
+    time_limit=300,
+)
+def recalculate_score(widget_id: str) -> None:
+    asyncio.run(_run(widget_id))            # bridge to async services
+
+async def _run(widget_id: str) -> None:
+    async for session in get_db_session():
+        repo = SqlAlchemyWidgetRepository(session)
+        svc = WidgetService(repo=repo, ...)  # same DI graph as API
+        await svc.recalculate(UUID(widget_id))
+```
+
+## Conventions
+
+- **Task name** = `<context>.<action>` (e.g., `widgets.recalculate_score`). Required for stable routing.
+- **One module per bounded context**: `app/workers/tasks/<context>_tasks.py`.
+- **Idempotent** — running the task twice with the same args produces the same final state. If not naturally idempotent, dedupe via Redis `SETNX` keyed on `task_id`.
+- **Construct services via the DI factories** (`get_*_service`), not by re-wiring inside the task.
+- **Logging**: log start (`task.start`) and finish (`task.finish`) with `task_id`, sanitized args, and duration via Celery signals.
+- **Sentry**: failed tasks captured automatically — set `release` and `environment` in `celery_app.py`.
+
+## Signals (in `app/workers/celery_app.py`)
+
+- `worker_ready` → log + warm caches.
+- `task_prerun`, `task_postrun` → bind `task_id`/`task_name` (and `locale` if present in kwargs) to structlog contextvars.
+- `task_failure` → emit metric + Sentry capture (Sentry SDK does this automatically when initialized).
+- `worker_shutting_down` → flush logs/metrics; pool draining is handled by `acks_late=True`.
+
+## Locale-bearing task example
+
+```python
+@celery_app.task(
+    name="events.on_user_registered_send_welcome_email",
+    acks_late=True,
+    max_retries=5,
+)
+def on_user_registered_send_welcome_email(payload: dict, locale: str) -> None:
+    bind_contextvars(locale=locale)              # logs are locale-tagged for the task
+    asyncio.run(_run(payload, locale))
+
+async def _run(payload: dict, locale: str) -> None:
+    sender = build_email_sender()
+    await sender.send_template(
+        template_id="welcome",
+        to=[payload["email"]],
+        context={"name": payload["name"]},
+        locale=locale,                           # rendering boundary
+    )
+```
+
+## Routing & DLQ
+
+- Default queue `default`; high-throughput / event handlers use `events`; long-running tasks use `slow`.
+- DLQ via `task_routes` and a separate `dead_letter` queue; alert on depth.
+- Per-task `queue=` argument when scheduling, not at task definition (more flexible).
+
+## Reliability config (in `celery_app.py`)
+
+```python
+celery_app.conf.update(
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    task_acks_on_failure_or_timeout=False,   # let retries handle it
+    worker_prefetch_multiplier=1,
+    worker_max_tasks_per_child=1000,         # restart workers periodically (memory hygiene)
+    broker_connection_retry_on_startup=True,
+    result_extended=True,
+    task_send_sent_event=True,               # for monitoring
+    worker_send_task_events=True,
+)
+```
+
+## Testing
+
+- Unit: call the function directly with `CELERY_TASK_ALWAYS_EAGER=true`. Assert side effects.
+- **Always** test idempotency: invoke the task twice with the same args; assert no double-effect.
+- Integration: schedule via `celery_app.send_task(...)`, assert via Redis broker the task was acknowledged and not requeued.

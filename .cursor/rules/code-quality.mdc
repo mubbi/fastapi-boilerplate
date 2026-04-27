@@ -1,0 +1,81 @@
+---
+description: Ruff, Black, mypy, pre-commit, conventional commits — the quality bar enforced in CI.
+alwaysApply: true
+---
+
+# Code Quality
+
+## Ruff (0.15+)
+
+- Selected rules: `E,F,I,B,UP,SIM,N,RUF,ASYNC,S,PL,PT,TID,TCH`.
+- `--fix` allowed in pre-commit; CI runs `ruff check` + `ruff format --check`.
+- Use `# noqa: <code>` only with a one-line justification comment.
+
+## Black (26.3+)
+
+- Line length **100**.
+- Target Python 3.14: `target-version = ["py314"]`.
+- Never disable Black on a file; reformat instead.
+
+## mypy (1.20+) — strict
+
+- `strict = true`; `warn_redundant_casts = true`; `warn_unused_ignores = true`.
+- No `Any` without a `# type: ignore[<code>]` comment with reason, or an explicit `cast(...)`.
+- Use the SQLAlchemy plugin (`plugins = ["sqlalchemy.ext.mypy.plugin"]`) and the Pydantic mypy plugin where helpful.
+
+## Pre-commit (4.6+)
+
+Hooks (must all pass before commit):
+
+- `ruff` (check + format)
+- `black --check`
+- `mypy app`
+- `bandit -q -r app`
+- `detect-secrets`
+- `end-of-file-fixer`, `trailing-whitespace`
+- `check-yaml`, `check-toml`, `check-merge-conflict`, `check-added-large-files`
+
+Install once via `make precommit-install`.
+
+## Security scanning (CI gates)
+
+- `pip-audit` — fail on **High** severity CVEs.
+- `bandit -r app` — fail on `HIGH` confidence + `HIGH` severity.
+- `detect-secrets scan --baseline .secrets.baseline` — no new findings.
+
+## Conventional Commits
+
+- `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `build:`, `ci:`.
+- Subject ≤ 72 chars, imperative mood. PR title is enforced as a Conventional Commit.
+- Squash-merge to `main`.
+
+## Docstrings
+
+- Google-style. Required on public APIs of services, repositories, and `app/core/*`.
+- Private helpers don't need docs but need clear names.
+
+## PR hygiene
+
+- One concern per PR. Migrations + tests live in the same PR as the model change.
+- PR description includes: change summary, motivation, migration note, rollback plan, observability impact.
+- Update `.env.example` when adding env vars (CI drift check fails otherwise).
+- Update **gettext catalogs** when adding user-visible strings: `make i18n-extract && make i18n-update`, translate every locale in `LOCALES_ENABLED`, then `make i18n-compile`. CI runs `make i18n-check` and fails on `messages.pot` drift or translation completeness below `LOCALE_TRANSLATION_COMPLETENESS_MIN`. See `i18n-l10n.mdc`.
+
+## Banned in PRs
+
+- Commented-out code (git remembers).
+- TODOs without a linked ticket ID.
+- Print statements (use structlog).
+- `Any` without a justification comment.
+- Hardcoded user-visible strings (use `_("...")` / `Translator`).
+- f-string formatting of user-visible numbers / dates / currencies (use `Translator.format_*`).
+- `if locale == "ar":` (or any locale) branches in business code.
+
+## Review gates
+
+Two reviewers run before merge — both must pass:
+
+- **Code review** (architecture, DI, Pydantic, SQLAlchemy, async, typing, i18n, testing): see `code-review.mdc`. Run via `/review-code` (Claude Code) or invoke `@code-review` rule in Cursor.
+- **Security review** (authn/z, secrets, SQLi/SSRF/IDOR, CORS, rate limit, containers, supply chain, audit logging, PII): see `security-review.mdc`. Run via `/review-security` or `@security-review`.
+
+CI gates (mypy, ruff, black, pip-audit, bandit, detect-secrets, image scan, `make i18n-check`) are necessary but not sufficient — the reviewer rubrics catch design and exploitability issues that linters can't.

@@ -1,0 +1,117 @@
+---
+description: Outbound HTTP via httpx 0.28+ + tenacity 9.1+ — timeouts, retries, circuit breakers, structured logs.
+globs: app/integrations/**/*.py,app/integrations/http/**/*.py
+alwaysApply: false
+---
+
+# Outbound HTTP
+
+Stack: **httpx 0.28+** (async) + **tenacity 9.1+** for retries. All outbound traffic goes through a shared client.
+
+## Hard rules
+
+- ❌ NEVER use `requests`. Sync HTTP on the async path is forbidden.
+- ❌ NEVER create `httpx.AsyncClient()` per call. Use the shared client from the DI container.
+- ❌ NEVER omit timeouts. A request without a timeout is a leak.
+- ❌ NEVER retry non-idempotent methods (POST without idempotency key) on a server-side error.
+- ❌ NEVER log request/response bodies at INFO. Bodies may contain PII / secrets.
+
+## Client construction
+
+```python
+# app/integrations/http/httpx_client.py
+import httpx
+from app.core.config import Settings
+
+def build_http_client(settings: Settings, *, app_version: str) -> httpx.AsyncClient:
+    timeout = httpx.Timeout(
+        timeout=settings.http_client.timeout_seconds,
+        connect=5.0,
+        read=settings.http_client.timeout_seconds,
+        write=settings.http_client.timeout_seconds,
+        pool=settings.http_client.timeout_seconds,
+    )
+    limits = httpx.Limits(
+        max_keepalive_connections=settings.http_client.max_keepalive,
+        max_connections=settings.http_client.max_connections,
+    )
+    return httpx.AsyncClient(
+        timeout=timeout,
+        limits=limits,
+        http2=True,
+        follow_redirects=False,
+        headers={"User-Agent": f"{settings.app_name}/{app_version}"},
+    )
+```
+
+## Retry pattern (tenacity)
+
+```python
+from tenacity import (
+    AsyncRetrying, retry_if_exception_type, stop_after_attempt,
+    wait_exponential_jitter, before_sleep_log,
+)
+import logging
+
+retryable_statuses = {408, 429, 500, 502, 503, 504}
+
+async def get_with_retry(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    async for attempt in AsyncRetrying(
+        stop=stop_after_attempt(settings.http_client.retry_attempts),
+        wait=wait_exponential_jitter(initial=settings.http_client.retry_backoff_base, max=10),
+        retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
+        before_sleep=before_sleep_log(log, logging.WARNING),
+        reraise=True,
+    ):
+        with attempt:
+            response = await client.get(url)
+            if response.status_code in retryable_statuses:
+                response.raise_for_status()
+            return response
+    raise RuntimeError("unreachable")
+```
+
+## Idempotency rules
+
+- Retry **GET, HEAD, PUT, DELETE** freely on transport errors and retryable statuses (408, 429, 5xx).
+- Retry **POST / PATCH** only when the upstream supports idempotency keys (you supply one) **or** the operation is idempotent by nature.
+- On 429, honor `Retry-After` if present.
+
+## Circuit breaker (per upstream host)
+
+- Open after **5** consecutive failures within **30s**.
+- Half-open after **30s** cooldown; first probe success closes.
+- When open: fail fast with `ExternalServiceError` and emit `circuit_breaker_open` metric.
+- Use a small library (e.g. `purgatory`) or a simple in-process state — keep it boring.
+
+## Adapter shape
+
+```python
+# app/integrations/<provider>/client.py
+class WidgetApiClient:
+    def __init__(self, http: httpx.AsyncClient, settings: WidgetApiSettings) -> None:
+        self._http = http
+        self._settings = settings
+
+    async def get_widget(self, widget_id: str) -> WidgetDTO:
+        url = f"{self._settings.base_url}/widgets/{widget_id}"
+        try:
+            response = await get_with_retry(self._http, url)
+        except httpx.HTTPError as err:
+            raise ExternalServiceError(
+                code="WIDGET_API_ERROR", message="upstream failure", details={"host": "widget-api"},
+            ) from err
+        return WidgetDTO.model_validate(response.json())
+```
+
+## Observability
+
+- Every call emits a metric: `http_client_requests_total{host,method,status_class}` and a latency histogram.
+- Every call creates an OTel span (`httpx` auto-instrumentation does this); annotate with `http.host`, `http.method`, `http.status_code`.
+- Log on failure only; success is captured by metrics.
+
+## Testing
+
+- Unit tests use `httpx.MockTransport` or `respx` — never real network.
+- Contract tests use recorded fixtures (`vcrpy` or saved JSON).
+- Inject a fake `WidgetApiClient` in service tests via DI override.

@@ -1,0 +1,91 @@
+---
+description: Docker & Compose — multi-stage builds, non-root, SERVICE_ROLE entrypoint, healthchecks, isolated test compose.
+globs: Dockerfile,docker/**/*,docker-compose*.yml,.dockerignore
+alwaysApply: false
+---
+
+# Docker & Compose
+
+Single image runs three roles via `SERVICE_ROLE`: **web**, **worker**, **beat**.
+
+## Dockerfile (multi-stage)
+
+```dockerfile
+# stage 1: build deps + compile gettext catalogs
+FROM python:3.14-slim AS builder
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml uv.lock ./
+RUN pip install --upgrade pip uv && uv sync --frozen --no-dev
+COPY app/locales/ app/locales/
+COPY babel.cfg .
+RUN uv run pybabel compile -d app/locales/   # .po → .mo (deterministic per build)
+
+# stage 2: runtime
+FROM python:3.14-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+RUN groupadd -r app && useradd -r -g app -s /sbin/nologin app
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/app/locales/ /app/app/locales/   # compiled .mo
+ENV PATH="/app/.venv/bin:$PATH"
+COPY --chown=app:app . .
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:8000/health || exit 1
+ENTRYPOINT ["docker/entrypoint.sh"]
+CMD []
+```
+
+## Hard rules
+
+- ❌ NEVER run as root in the runtime stage.
+- ❌ NEVER copy the entire repo before deps; cache the layer with `pyproject.toml` + lockfile first.
+- ❌ NEVER bake secrets into the image (`.env`, keys). Pass at runtime.
+- ❌ NEVER add `apt-get install` in the runtime stage without `--no-install-recommends` and cleanup.
+- ❌ NEVER omit a healthcheck.
+- ✅ Pin Python (`3.14-slim` not `3-slim`); pin base image digest in production.
+- ✅ Image labels: `org.opencontainers.image.revision`, `version`, `source`.
+- ✅ `.dockerignore` excludes `.git`, `tests/`, `docs/`, `*.md`, dotfiles.
+
+## Entrypoint (selects role)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+case "${SERVICE_ROLE:-web}" in
+  web)    exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:${PORT:-8000} \
+            --workers "${GUNICORN_WORKERS:-3}" --timeout 60 --graceful-timeout 30 --keep-alive 5 --access-logfile - --error-logfile - ;;
+  worker) exec celery -A app.workers.celery_app worker --loglevel=INFO --concurrency="${CELERY_WORKER_CONCURRENCY:-4}" -Q "${CELERY_QUEUES:-default,events}" ;;
+  beat)   exec celery -A app.workers.celery_app beat --loglevel=INFO --scheduler "${CELERY_BEAT_SCHEDULER:-celery.beat.PersistentScheduler}" ;;
+  *)      echo "Unknown SERVICE_ROLE: ${SERVICE_ROLE}"; exit 1 ;;
+esac
+```
+
+## docker-compose.yml (dev)
+
+- Services: `api`, `worker`, `beat`, `postgres`, `redis`, `mailhog`.
+- All app services use the **same** image; differ only by `SERVICE_ROLE`.
+- Use named volumes for `postgres_data`, `redis_data`.
+- Healthchecks on `postgres` (`pg_isready`) and `redis` (`redis-cli ping`); app services `depends_on: { condition: service_healthy }`.
+- Bind-mount `./app` for hot reload (dev only); not in prod images.
+
+## docker-compose.test.yml (isolation)
+
+- Services: `postgres_test` (port 55432), `redis_test` (port 56379), `mailhog`.
+- **No app containers** — pytest runs on the host with `.env.test`.
+- Separate volume names (`postgres_test_data`, `redis_test_data`) so dev data is never shared.
+- Tests run via `make setup ENV=test && make test`. CI tears down after the run.
+
+## Build & cache
+
+- Use BuildKit (`DOCKER_BUILDKIT=1`).
+- Cache to a registry in CI: `--cache-to type=registry,ref=...:cache --cache-from type=registry,ref=...:cache`.
+- Tag images: `<repo>:<git-sha>` and `<repo>:latest` (latest only on main).
+
+## Image scanning
+
+- Trivy / Grype in CI; fail on **High** CVEs in app deps and base image.
+- Re-pin base image when CVEs land; cron a weekly rebuild even when no app code changes.

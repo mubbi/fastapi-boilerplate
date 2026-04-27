@@ -1,0 +1,86 @@
+---
+description: Asyncio patterns — TaskGroup, cancellation, no sync I/O on the request path, graceful shutdown.
+globs: app/**/*.py
+alwaysApply: false
+---
+
+# Async Patterns
+
+## Hard rules
+
+- ❌ NEVER call sync I/O on the request path: no `requests`, no `time.sleep`, no `psycopg2`, no `boto3` clients without aioboto3.
+- ❌ NEVER block the event loop with CPU-heavy work. Offload to a Celery task or `run_in_executor` with a process pool.
+- ❌ NEVER fire-and-forget a coroutine with `asyncio.create_task(...)` and lose the reference — exceptions vanish silently.
+- ❌ NEVER swallow `asyncio.CancelledError`. Catch only to clean up, then **re-raise**.
+
+## Concurrency
+
+Use **`asyncio.TaskGroup`** (PEP 654) for structured concurrency:
+
+```python
+async with asyncio.TaskGroup() as tg:
+    t1 = tg.create_task(fetch_a())
+    t2 = tg.create_task(fetch_b())
+a, b = t1.result(), t2.result()
+```
+
+- TaskGroup propagates exceptions (`ExceptionGroup`) — handle with `except*`.
+- Avoid `asyncio.gather(..., return_exceptions=True)` unless you genuinely need to ignore failures.
+
+## Bounded concurrency
+
+When fanning out N requests, bound the parallelism with a semaphore:
+
+```python
+sem = asyncio.Semaphore(20)
+async def bounded(coro):
+    async with sem:
+        return await coro
+```
+
+A helper exists at `app/utils/async_utils.py::gather_with_concurrency(n, *coros)`.
+
+## Timeouts
+
+Use `asyncio.timeout(...)` (3.11+) — context manager, integrates with cancellation:
+
+```python
+async with asyncio.timeout(5):
+    result = await slow_call()
+```
+
+Don't use `asyncio.wait_for` (legacy). Always set a timeout on every external call.
+
+## Cancellation discipline
+
+```python
+try:
+    await op()
+except asyncio.CancelledError:
+    # cleanup only
+    await release_resources()
+    raise           # ALWAYS re-raise
+```
+
+## Graceful shutdown
+
+- Lifespan hook (`app/core/lifespan.py`) flips a draining flag → `/ready` returns 503.
+- LB stops sending new traffic.
+- App finishes in-flight requests within `APP_GRACEFUL_SHUTDOWN_SECONDS`.
+- Teardown: close DB engine, Redis pool, HTTP client, OTel exporters.
+- Celery workers: stop accepting new tasks (`worker_shutting_down` signal), finish current ones.
+
+## Async ↔ sync bridging
+
+- In sync code (Celery tasks defined as sync), use `asyncio.run(_run(...))` once at the boundary.
+- In async code, never call sync blocking functions without `loop.run_in_executor(...)`. Prefer the async equivalent of the library.
+
+## Event loop policy
+
+- Default policy is fine. Don't swap to a custom policy without an ADR. If you need extra perf, consider `uvloop` only after benchmarking.
+
+## Don't
+
+- ❌ `time.time()` for timeouts inside async code → use `loop.time()` or `monotonic`.
+- ❌ Holding a DB session across `await` boundaries that sleep significantly — connections are limited.
+- ❌ Mixing `trio`/`anyio` paradigms with `asyncio` in the same module without anyio's compatibility shim.

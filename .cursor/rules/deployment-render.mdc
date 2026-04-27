@@ -1,0 +1,119 @@
+---
+description: Render.com deployment — service topology, SERVICE_ROLE, managed Postgres/Redis, pre-deploy migrations.
+globs: render.yaml,docker/**/*,scripts/setup_env.sh,Makefile
+alwaysApply: false
+---
+
+# Deployment — Render.com
+
+## Service topology
+
+| Render service | `SERVICE_ROLE` | Scale | What it runs |
+|---|---|---|---|
+| **Web Service** | `web` | ≥ 2 (HA) | `gunicorn app.main:app -k uvicorn.workers.UvicornWorker` |
+| **Background Worker** | `worker` | ≥ 1 (autoscale) | `celery -A app.workers.celery_app worker` |
+| **Background Worker** | `beat` | **exactly 1** | `celery -A app.workers.celery_app beat` |
+| **Pre-Deploy Job** | — | one-shot | `alembic upgrade head` |
+
+- Same Docker image; `SERVICE_ROLE` selects the entrypoint branch.
+- DB and Redis are **managed** Render addons. The app does not host them in production.
+
+## render.yaml (canonical structure)
+
+```yaml
+services:
+  - type: web
+    name: api
+    runtime: docker
+    plan: starter
+    numInstances: 2
+    healthCheckPath: /ready
+    autoDeploy: true
+    envVars:
+      - key: SERVICE_ROLE
+        value: web
+      - key: APP_ENV
+        value: production
+      - fromGroup: app-secrets
+    preDeployCommand: "alembic upgrade head"
+  - type: worker
+    name: worker
+    runtime: docker
+    plan: starter
+    numInstances: 1
+    autoscaling:
+      enabled: true
+      min: 1
+      max: 5
+      targetCPU: 70
+    envVars:
+      - key: SERVICE_ROLE
+        value: worker
+      - fromGroup: app-secrets
+  - type: worker
+    name: beat
+    runtime: docker
+    plan: starter
+    numInstances: 1                 # MUST stay at 1
+    envVars:
+      - key: SERVICE_ROLE
+        value: beat
+      - fromGroup: app-secrets
+databases:
+  - name: postgres
+    plan: starter
+envVarGroups:
+  - name: app-secrets
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+```
+
+## Hard rules
+
+- ❌ NEVER run Beat with `numInstances` > 1. The defense-in-depth Redis lock (see `celery-beat.mdc`) does not replace this rule.
+- ❌ NEVER run migrations in the web service's start command. Use `preDeployCommand`.
+- ❌ NEVER bake secrets into the image; always env vars / Render Secret Files.
+- ❌ NEVER expose `/metrics` publicly. If using a Render Private Service for scraping, keep it internal; otherwise use `METRICS_ENDPOINT_AUTH_TOKEN`.
+- ✅ `healthCheckPath: /ready` (not `/health`) — readiness = "willing to take traffic".
+- ✅ `autoDeploy: true` on `main` after CI passes.
+
+## Pre-deploy (migration) failure handling
+
+- Pre-deploy fails → deploy aborts → previous image keeps serving.
+- Migrations are **backward-compatible** so the previous image works against the new schema.
+- Rollback = redeploy previous image (no Alembic downgrade in prod).
+
+## Graceful shutdown on Render
+
+- Render sends `SIGTERM`, waits, then `SIGKILL`.
+- App: `lifespan` flips the draining flag → `/ready` returns 503 → LB stops sending traffic → in-flight requests finish.
+- Worker: `worker_shutting_down` signal → finishes current task (because `acks_late=True`), unacked tasks return to broker.
+- Configure Gunicorn `--graceful-timeout 30` to match Render's grace.
+
+## Environment variables (managed groups)
+
+- `app-secrets`: `SECRET_KEY`, `DATABASE_URL` (from Render DB), `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `EMAIL_*`, `JWT_SECRET_KEY`.
+- Per-service `SERVICE_ROLE` is inline.
+- `APP_ENV=production` is inline.
+
+## CI/CD (Bitbucket Pipelines → Render)
+
+- Bitbucket runs lint → typecheck → tests (against `docker-compose.test.yml`) → build & push image → triggers Render deploy hook (or relies on `autoDeploy: true`).
+- Branch protection on `main`: require green pipeline + 1 review.
+
+## Custom domains & TLS
+
+- TLS terminated at Render LB; HSTS on; HTTP→HTTPS redirect.
+- `APP_TRUSTED_HOSTS` populated with the deployed domains.
+
+## Observability hookup
+
+- Render log drain → SaaS log store (Datadog / Better Stack / vendor of choice).
+- OTel collector → vendor (Honeycomb / Datadog / Tempo via OTLP).
+- Sentry SDK initialized at app startup with `release = APP_VERSION`.
+
+## Cost / scaling rules of thumb
+
+- Right-size DB instance for connection count: `pool_size * num_app_instances * 2 ≤ db_max_connections`.
+- Worker autoscale target: queue latency, not CPU. Add a Render scaling rule on a custom metric when needed.

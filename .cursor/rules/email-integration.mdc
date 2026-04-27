@@ -1,0 +1,117 @@
+---
+description: Email via EmailSender Protocol — aiosmtplib + Jinja2, MailHog in dev, NullSender in tests.
+globs: app/integrations/email/**/*.py,app/templates/email/**/*,app/services/**/*.py
+alwaysApply: false
+---
+
+# Email Integration
+
+Stack: **aiosmtplib** + **Jinja2** templates, behind an `EmailSender` Protocol.
+
+## Protocol
+
+```python
+# app/integrations/email/base.py
+from typing import Protocol
+from pydantic import BaseModel, EmailStr
+
+class EmailMessage(BaseModel):
+    to: list[EmailStr]
+    subject: str
+    text_body: str | None = None
+    html_body: str | None = None
+    cc: list[EmailStr] = []
+    bcc: list[EmailStr] = []
+    headers: dict[str, str] = {}
+
+class EmailSender(Protocol):
+    async def send(self, message: EmailMessage) -> None: ...
+    async def send_template(
+        self,
+        template_id: str,
+        *,
+        to: list[str],
+        context: dict,
+        locale: str | None = None,   # resolves to LOCALE_DEFAULT if None
+    ) -> None: ...
+    async def health(self) -> bool: ...
+```
+
+## Implementations
+
+| Implementation | Used in | Notes |
+|---|---|---|
+| `SmtpEmailSender` (`aiosmtplib`) | local (MailHog), staging, prod (when no SaaS) | TLS / STARTTLS configurable |
+| `NullEmailSender` | tests / `EMAIL_ENABLED=false` | No-op, tracks calls in-memory for assertions |
+| Provider adapters (SendGrid, SES, Postmark) | prod opt-in via `EMAIL_PROVIDER` | Add behind same Protocol |
+
+## Hard rules
+
+- ❌ NEVER call `aiosmtplib` / SMTP libraries directly from a service. Always go through `EmailSender`.
+- ❌ NEVER log full bodies or recipient lists at INFO. Audit at DEBUG with redaction.
+- ❌ NEVER hardcode templates as Python strings. Templates live in `app/templates/email/<name>/<locale>/{subject,html,txt}.j2`.
+- ❌ NEVER send mail synchronously from an HTTP route. Dispatch a Celery task (often as an event listener).
+- ❌ NEVER include user-controlled HTML without escaping — Jinja2 default escaping must stay on.
+- ❌ NEVER ship a new email template without a translated variant for **every** locale in `LOCALES_ENABLED`. The CI gate `make i18n-check` validates completeness.
+- ❌ NEVER hardcode `dir="ltr"` or `dir="rtl"` in a template body. Inherit `base.html.j2` which sets `lang` and `dir` from `Translator.is_rtl(locale)`.
+
+## Dev / test / prod
+
+- **Local**: MailHog or Mailpit (`SMTP_HOST=mailhog`, port 1025); UI at http://localhost:8025.
+- **Tests**: `EMAIL_ENABLED=false` + `NullEmailSender`, **or** integration tests assert against MailHog API. Never send real mail in CI.
+- **Prod**: TLS, authenticated SMTP from secrets, or provider API keys. Set `From:` to a verified sender; configure SPF/DKIM/DMARC on the domain.
+
+## Templates (per-locale layout)
+
+```
+app/templates/email/welcome/
+  base.html.j2             # base layout: <html lang="..." dir="..."> + RTL-aware CSS
+  context_schema.py        # Pydantic schema for the template context
+  en/{subject.j2,html.j2,txt.j2}
+  ar/{subject.j2,html.j2,txt.j2}
+```
+
+- One template directory per email; **one subdir per locale** under it.
+- Always provide both HTML and text bodies.
+- Subject is a separate template (often one-liner) so it's localizable independently.
+- Validate the rendering context with a Pydantic schema; pass typed objects, not raw dicts, when possible.
+- The renderer falls back to `LOCALE_FALLBACK` if a locale-specific template is missing and emits an `email_locale_fallback_total{template,locale}` counter.
+- Mark any inline strings inside the template with `{{ _("...") }}` so they are extracted into `messages.pot`.
+
+## Service usage
+
+Locale is **not** part of the domain event (events are facts). The publisher passes the resolved request locale (or the user's stored preference) as a separate task kwarg:
+
+```python
+# Service: don't await the send; enqueue the event with a separate locale kwarg.
+await self._events.publish(
+    UserRegistered(occurred_at=now, aggregate_id=user.id, email=user.email),
+    locale=user.preferred_locale or request_locale,
+)
+
+# Listener task: actually send.
+@celery_app.task(name="events.on_user_registered_send_welcome_email", acks_late=True, max_retries=5)
+def send_welcome(payload: dict, locale: str) -> None:
+    bind_contextvars(locale=locale)
+    asyncio.run(_run_send_welcome(payload, locale))
+
+async def _run_send_welcome(payload: dict, locale: str) -> None:
+    sender: EmailSender = build_email_sender()
+    await sender.send_template(
+        template_id="welcome",
+        to=[payload["email"]],
+        context={"name": payload["name"]},
+        locale=locale,                       # picks app/templates/email/welcome/<locale>/
+    )
+```
+
+## Bounce / complaint handling
+
+- For SaaS providers (SES, SendGrid), set up webhooks → secured endpoint → enqueue a `EmailBounced` / `EmailComplained` event for downstream handling.
+- For raw SMTP, monitor postmaster bounces; escalate via runbook.
+
+## Compliance
+
+- Honor unsubscribe headers and per-region opt-in regulations.
+- Never include PII in `subject`. Keep subjects generic.
+- Retention: outbound mail metadata logged for audit (recipient hash + timestamp + template_id), bodies **not** retained.

@@ -1,0 +1,91 @@
+---
+description: Prometheus metrics, OpenTelemetry tracing, Sentry error tracking — what to instrument, how to expose.
+globs: app/core/metrics.py,app/core/tracing.py,app/core/logging.py,app/main.py
+alwaysApply: false
+---
+
+# Observability
+
+Three signals: **logs** (structlog), **metrics** (Prometheus), **traces** (OpenTelemetry). Sentry on top for error tracking.
+
+## Metrics — prometheus-client (0.25+)
+
+### Required metrics
+
+- HTTP: request count, latency histogram, in-flight gauge, error rate per route + status class.
+- DB pool: active / idle / total connections, checkout wait time, statement duration histogram.
+- Redis: command count, latency, error rate.
+- Outbound HTTP per host: request count, latency, error rate, **circuit breaker state**.
+- Celery: task count by name + state, queue depth, processing duration, retry count.
+- Process: CPU, RSS, FDs, GC counts (default `ProcessCollector` + `PlatformCollector`).
+- Custom business metrics: registered via `app/core/metrics.py`; documented in code.
+
+### Multiprocess Gunicorn
+
+- Set `PROMETHEUS_MULTIPROC_DIR=/tmp/prom` in the container.
+- Use `prometheus_client.multiprocess.MultiProcessCollector(registry)` so all Gunicorn workers share metrics.
+- Clean the dir on container start; write a worker exit hook to clean its files.
+
+### Endpoint
+
+- `/metrics` exposes Prometheus format. Protected by `METRICS_ENDPOINT_AUTH_TOKEN` if set (Bearer header check).
+- Latency budget: ≤ 50ms p95.
+
+## Tracing — OpenTelemetry (1.24+)
+
+### Auto-instrumentation
+
+- FastAPI, SQLAlchemy, asyncpg, httpx, Redis, Celery — use the `opentelemetry-instrumentation-*` packages.
+- Configure once in `app/core/tracing.py` and call from app startup + Celery `worker_init` signal.
+
+### Manual spans
+
+- Wrap meaningful business operations:
+  ```python
+  from opentelemetry import trace
+  tracer = trace.get_tracer(__name__)
+
+  with tracer.start_as_current_span("widget.recalculate", attributes={"widget.id": str(widget_id)}):
+      ...
+  ```
+- Set span status: `span.set_status(Status(StatusCode.ERROR))` on caught + re-raised errors.
+
+### Exporters & sampling
+
+- Exporter: **OTLP** to `OTEL_EXPORTER_OTLP_ENDPOINT` (vendor-agnostic).
+- Sampler: `parentbased_traceidratio` with arg `OTEL_TRACES_SAMPLER_ARG` (default 0.1 in prod).
+- Propagators: W3C `tracecontext` + `baggage`.
+
+### Don't trace these
+
+- Health/ready endpoints — exclude via `OTEL_PYTHON_EXCLUDED_URLS=/health,/ready,/metrics`.
+
+## Error tracking — Sentry SDK
+
+- `release = APP_VERSION`, `environment = APP_ENV`.
+- `before_send` strips PII and bodies.
+- Failed Celery tasks captured automatically.
+- Tie to OTel via Sentry's W3C trace context support so spans + errors link.
+
+## Health endpoints (spec §12.5)
+
+- `/health` — process is alive (always 200).
+- `/ready` — checks all required deps in parallel (DB `SELECT 1`, Redis `PING`, registered integrations) with 1s timeouts. Cached 5–10s.
+  - All required ok → 200.
+  - Any required failing → 503.
+  - Optional dep failing → 200 with `degraded`.
+
+## Alerting (must exist before prod traffic)
+
+- 5xx rate > 1% for 5m → page.
+- p95 latency > SLO for 10m → ticket.
+- DB pool saturation > 80% for 5m → ticket.
+- Celery queue depth > N for 10m → ticket.
+- Failed deploy / failed migration → page.
+
+## Hard rules
+
+- ❌ NEVER expose `/metrics` publicly without auth in production.
+- ❌ NEVER add a custom metric without a label spec; high-cardinality labels (user_id, request_id) explode storage.
+- ❌ NEVER instrument inside hot loops; place spans/metrics at use-case boundaries.
+- ✅ Every external integration's `health()` check must be registered in `/ready`.

@@ -1,0 +1,130 @@
+---
+description: Domain events dispatched to Celery — facts, post-commit, idempotent listeners.
+globs: app/events/**/*.py,app/workers/tasks/events_tasks.py,app/services/**/*.py
+alwaysApply: false
+---
+
+# Domain Events
+
+Events are **facts that already happened** (past tense) emitted by services after a successful Unit of Work commit. Listeners run as Celery tasks.
+
+## Hard rules
+
+- ❌ NEVER name an event imperatively (`SendWelcomeEmail`). Use past tense (`UserRegistered`).
+- ❌ NEVER publish before the transaction commits. Listeners would observe rolled-back state.
+- ❌ NEVER mutate an event payload after construction. Events are immutable.
+- ❌ NEVER call another service's private methods from a listener — emit a new event or expose a public use case.
+- ❌ NEVER include large blobs in event payloads — use IDs and let the listener fetch.
+- ❌ NEVER include `locale` (or other rendering / presentation data) on the event payload. Events are facts; locale is a rendering concern. Pass `locale` as a **separate** task kwarg at publish time. See `i18n-l10n.mdc`.
+
+## Event shape
+
+```python
+# app/events/types.py
+from dataclasses import dataclass, field
+from datetime import datetime
+from uuid import UUID, uuid4
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DomainEvent:
+    event_id: UUID = field(default_factory=uuid4)
+    occurred_at: datetime
+    schema_version: int = 1
+    aggregate_type: str
+    aggregate_id: UUID
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UserRegistered(DomainEvent):
+    aggregate_type: str = "user"
+    email: str
+    # NOTE: do NOT add `locale` here. Locale is a rendering concern; pass it as a
+    # task kwarg at publish time so we can re-target the same event to a different
+    # locale later (e.g. user changes preference) without rewriting history.
+```
+
+## Registry
+
+```python
+# app/events/registry.py
+EVENT_TASK_MAP: dict[type[DomainEvent], list[str]] = {
+    UserRegistered: [
+        "events.on_user_registered_send_welcome_email",
+        "events.on_user_registered_provision_workspace",
+    ],
+}
+```
+
+A single event can fan out to **multiple** listener tasks; each is independent and retries on its own.
+
+## Publisher
+
+```python
+# app/events/publisher.py
+class EventPublisher(Protocol):
+    async def publish(self, event: DomainEvent, *, locale: str | None = None) -> None: ...
+
+class CeleryEventPublisher(EventPublisher):
+    async def publish(self, event: DomainEvent, *, locale: str | None = None) -> None:
+        for task_name in EVENT_TASK_MAP[type(event)]:
+            kwargs: dict[str, object] = {"payload": _serialize(event)}
+            if locale is not None:
+                kwargs["locale"] = locale          # passed to listeners that produce user-facing output
+            celery_app.send_task(
+                task_name,
+                kwargs=kwargs,
+                task_id=str(event.event_id),       # broker-level dedupe
+                queue="events",
+            )
+```
+
+## Service usage
+
+```python
+async def register(self, cmd: RegisterUserCommand) -> User:
+    user = User.new(cmd, now=self._clock.now())
+    async with self._uow:
+        await self._repo.add(user)
+        await self._uow.commit()                 # COMMIT FIRST
+    await self._events.publish(                  # THEN publish
+        UserRegistered(
+            occurred_at=self._clock.now(),
+            aggregate_id=user.id,
+            email=user.email,
+        ),
+        locale=cmd.locale,                       # rendering hint; NOT part of the event
+    )
+    return user
+```
+
+## Listener task shape
+
+```python
+@celery_app.task(name="events.on_user_registered_send_welcome_email", acks_late=True, max_retries=5)
+def on_user_registered_send_welcome_email(payload: dict, locale: str | None = None) -> None:
+    event = UserRegistered(**_deserialize(payload))
+    if locale is not None:
+        bind_contextvars(locale=locale)
+    asyncio.run(_run(event, locale))
+```
+
+## Idempotency
+
+- `event_id` doubles as Celery `task_id` → broker-level dedupe (same id won't enqueue if not yet executed).
+- For at-most-once handler semantics: unique constraint on `(event_id, handler_name)` in a `processed_events` table, **or** Redis `SETNX` with TTL keyed on the same pair.
+- Listeners must always assume the event may arrive again.
+
+## Outbox pattern (when stronger guarantees are needed)
+
+If "publish after commit" can fail (process crash between commit and `send_task`), add a transactional outbox:
+
+1. In the same UoW that commits the aggregate, insert a row in `event_outbox`.
+2. A polling Celery task reads unprocessed outbox rows and dispatches them.
+3. Mark dispatched rows; cleanup periodically.
+
+This is a step up from "best-effort publish-after-commit"; introduce only when reliability requires it (ADR + cost in latency).
+
+## Testing
+
+- Unit: service test asserts the publisher fake captured the right event **only** when the commit succeeds.
+- Integration: use `CELERY_TASK_ALWAYS_EAGER=true` and assert listener side effects (e.g. email sent to MailHog, downstream row created).
+- Negative: simulate listener failure and assert retry / DLQ behavior.

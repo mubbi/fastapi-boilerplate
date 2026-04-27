@@ -1,0 +1,92 @@
+---
+description: FastAPI 0.136+ router patterns. HTTP-only layer; thin handlers calling a single service method.
+globs: app/api/**/*.py
+alwaysApply: false
+---
+
+# FastAPI Routers
+
+Target: FastAPI **0.136+**.
+
+## Hard rules
+
+- ❌ NEVER import `app.repositories.*` or `app.integrations.*` from a router.
+- ❌ NEVER raise `HTTPException` — raise a `DomainError` from the service; the global handler maps it.
+- ❌ NEVER include business logic in a handler. Validate input, call **one** service method, return.
+- ❌ NEVER touch `request.state` for app-state mutation; use it only for read-only correlation (`request_id`, `locale`).
+- ❌ NEVER read `Accept-Language` directly. Use `Annotated[str, Depends(get_current_locale)]`. See `i18n-l10n.mdc`.
+- ❌ NEVER hardcode user-visible strings in handler responses. Domain errors carry gettext keys; the handler translates them.
+
+## Required handler shape
+
+```python
+from typing import Annotated
+from fastapi import APIRouter, Depends, status
+
+router = APIRouter(prefix="/api/v1/widgets", tags=["widgets"])
+
+@router.post(
+    "",
+    response_model=WidgetResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    summary="Create a widget",
+    description="...",
+)
+async def create_widget(
+    body: WidgetCreateRequest,
+    svc: Annotated[WidgetService, Depends(get_widget_service)],
+) -> WidgetResponse:
+    widget = await svc.create(body.to_command())
+    return WidgetResponse.model_validate(widget)
+```
+
+## Conventions
+
+- Use `Annotated[Type, Depends(...)]` (modern FastAPI style); avoid the legacy `param = Depends(...)` form.
+- Always set `response_model`, `status_code`, and an explicit `responses={...}` for documented errors.
+- Always set `summary` and `description` — these populate OpenAPI.
+- Use sub-routers per resource; aggregate into `app/api/v1/router.py`.
+- Path: `/api/v1/<plural-kebab>` for collections, `/api/v1/<plural>/{id}` for items.
+- Pagination, auth, idempotency, request-id all come from `app/api/deps.py`.
+
+## Auth & rate limiting
+
+- Auth: `Annotated[CurrentUser, Depends(require_scopes("widget.read"))]`. Never inline scope checks.
+- Rate limiting: `@limiter.limit("60/minute")` from slowapi when stricter than default.
+
+## Idempotency
+
+- For non-GET endpoints: accept `Idempotency-Key` header via dep; service layer dedupes (24h TTL in Redis).
+
+## Versioning
+
+- Business endpoints under `/api/v{N}`; platform endpoints (`/health`, `/ready`, `/metrics`) unversioned, but mirrored under `/api/v1/health` etc. for clients pinned to `/api/v1`.
+
+## What lives in `app/api/deps.py`
+
+- `get_db_session()` — yields `AsyncSession`.
+- `get_pagination(page=1, page_size=20)` — caps `page_size` ≤ 100.
+- `get_current_user()`, `require_scopes(*scopes)` — auth.
+- `get_idempotency_key(request)` — extracts header, validates format.
+- `get_request_id(request)` — reads middleware-set value.
+- `get_current_locale(request)` — reads `request.state.locale` (set by `LocaleMiddleware`). The resolver is the single source of truth; handlers never parse `Accept-Language` themselves.
+
+Domain factories (`get_*_service`, `get_*_repo`) live in `app/core/container.py`.
+
+## Locale-aware handler example
+
+```python
+from typing import Annotated
+from fastapi import APIRouter, Depends
+
+@router.get("/{widget_id}", response_model=WidgetResponse)
+async def get_widget(
+    widget_id: UUID,
+    locale: Annotated[str, Depends(get_current_locale)],
+    svc: Annotated[WidgetService, Depends(get_widget_service)],
+) -> WidgetResponse:
+    # The service is locale-agnostic. Locale flows through the response/error path
+    # (Content-Language header, translated error.message) — not into business logic.
+    return WidgetResponse.model_validate(await svc.get(widget_id))
+```

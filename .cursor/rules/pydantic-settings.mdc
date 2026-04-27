@@ -1,0 +1,88 @@
+---
+description: pydantic-settings — config loading, SecretStr, fail-fast validation, .env.test isolation.
+globs: app/core/config.py,.env*,app/main.py
+alwaysApply: false
+---
+
+# pydantic-settings (latest)
+
+The **only** module that reads environment variables.
+
+## Required shape
+
+```python
+from typing import Annotated, ClassVar
+from functools import lru_cache
+
+from pydantic import BaseModel, Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class DatabaseSettings(BaseModel):
+    url: str
+    pool_size: int = 10
+    max_overflow: int = 20
+    pool_timeout: int = 30
+    pool_recycle_seconds: int = 1800
+    echo: bool = False
+    statement_timeout_ms: int = 15_000
+
+class RedisSettings(BaseModel):
+    url: str
+    max_connections: int = 50
+    socket_timeout: int = 5
+
+class I18nSettings(BaseModel):
+    locales_enabled: list[str] = ["en", "ar"]
+    locale_default: str = "en"
+    locale_fallback: str = "en"
+    locale_query_param: str = "lang"            # "" disables ?lang= override
+    locale_header_name: str = "Accept-Language"
+    locale_domain: str = "messages"
+    locale_dir: str = "app/locales"
+    rtl_locales: list[str] = ["ar"]
+    locale_translation_completeness_min: float = 0.95
+
+class Settings(BaseSettings):
+    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
+        env_file=".env",
+        env_nested_delimiter="__",
+        case_sensitive=False,
+        extra="forbid",
+    )
+
+    app_name: str = "fastapi-boilerplate"
+    app_env: Annotated[str, Field(pattern=r"^(local|dev|staging|production|test)$")] = "local"
+    app_version: str = "0.0.0"
+    secret_key: SecretStr
+
+    database: DatabaseSettings
+    redis: RedisSettings
+    i18n: I18nSettings = I18nSettings()
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()  # raises ValidationError if any required field is missing
+```
+
+## Hard rules
+
+- ❌ NEVER call `os.getenv(...)` outside this module — go through `Settings`.
+- ❌ NEVER `print(settings)` raw — `SecretStr.__repr__` already redacts, but log via the structured logger.
+- ❌ NEVER mutate `Settings` at runtime; recreate via `get_settings.cache_clear()` (used in tests only).
+- ❌ NEVER add a setting without also adding it to `.env.example` (CI drift check fails otherwise).
+- ✅ All sensitive values use `SecretStr`. Read with `.get_secret_value()` only at the moment of use.
+- ✅ Nested settings use `BaseModel` sub-classes with `env_nested_delimiter="__"` (e.g. `DATABASE__URL`).
+- ✅ `extra="forbid"` so typos in env vars fail the build at startup.
+
+## Test isolation
+
+- `.env.test` is committed and points at `DATABASE_URL_TEST`, `REDIS_URL_TEST`, etc.
+- `tests/conftest.py` calls `get_settings.cache_clear()` between sessions if it ever overrides settings (rarely).
+- Guardrail: at session start, assert the resolved DB URL contains `_test` or matches an allowlist; fail loudly otherwise.
+
+## Common gotchas
+
+- `bool` fields read `"1" / "true" / "yes"` (case-insensitive) as `True`.
+- `list[str]` and `dict` fields use **JSON syntax** in env: `APP_CORS_ORIGINS=["http://localhost:3000"]`.
+- Use `Field(default_factory=list)` for mutable defaults — never `default=[]`.
+- For per-environment overrides, use `pydantic_settings.SettingsConfigDict(env_file=(".env", f".env.{env}"))` and let later files win.

@@ -1,0 +1,78 @@
+---
+description: Pydantic v2 (2.13+) idioms — schemas, settings, validators, performance.
+globs: app/schemas/**/*.py,app/core/config.py,app/events/types.py
+alwaysApply: false
+---
+
+# Pydantic v2 (2.13+)
+
+## Hard rules
+
+- ❌ NEVER use `class Config:` (v1) — use `model_config: ClassVar[ConfigDict]`.
+- ❌ NEVER use `@validator` / `@root_validator` (v1) — use `@field_validator` / `@model_validator`.
+- ❌ NEVER use `.dict()` / `.json()` — use `.model_dump()` / `.model_dump_json()`.
+- ❌ NEVER use `parse_obj` / `from_orm` — use `model_validate` / `model_validate_json` (and set `from_attributes=True` only on response models that read ORM rows).
+- ✅ Always set `extra="forbid"` on **request** schemas to reject unknown fields.
+
+## Required shape (request/response)
+
+```python
+from typing import Annotated, ClassVar
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+class WidgetCreateRequest(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        frozen=False,
+    )
+
+    name: Annotated[str, Field(min_length=1, max_length=120, examples=["Acme widget"])]
+    slug: Annotated[str, Field(pattern=r"^[a-z0-9-]+$", max_length=80)]
+    quantity: Annotated[int, Field(ge=0, le=10_000)]
+
+    @field_validator("slug")
+    @classmethod
+    def _no_double_dash(cls, v: str) -> str:
+        if "--" in v:
+            raise ValueError("slug cannot contain consecutive dashes")
+        return v
+
+class WidgetResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
+    id: UUID
+    name: str
+    slug: str
+    quantity: int
+    created_at: datetime
+```
+
+## Conventions
+
+- Prefer **`Annotated[type, Field(...)]`** to attach metadata; keeps types composable.
+- Use `Annotated[X, AfterValidator(fn)]` for reusable validators across schemas.
+- Frozen DTOs (immutable value objects, events): `ConfigDict(frozen=True)`.
+- Use `TypeAdapter(list[X])` for ad-hoc validation (e.g., parsing JSON arrays).
+- For strict primitives use `StrictStr`, `StrictInt`, etc. or `Field(strict=True)`.
+- Discriminated unions: `Annotated[ModelA | ModelB, Field(discriminator="kind")]`.
+
+## Performance
+
+- v2 is fast — avoid premature optimization. Don't use `model_construct` (skips validation) outside hot, internally trusted paths.
+- For high-throughput parsing: `TypeAdapter` is faster than ad-hoc `BaseModel.model_validate` due to caching.
+- `model_dump(mode="json")` produces JSON-safe types (UUID → str, datetime → ISO string).
+
+## Plugin
+
+Enable the **Pydantic mypy plugin** in `pyproject.toml`:
+```toml
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+```
+
+## Don't
+
+- ❌ Inherit `BaseModel` for **internal** value types if a `dataclass(frozen=True, slots=True)` suffices.
+- ❌ Mix request and response schemas in a single class.
+- ❌ Add business logic to schemas — they validate shape; services validate rules.
+- ❌ Hardcode user-visible English strings in `Field(description=...)` for schemas that surface validation errors to end users. Validation **messages** are localized at the exception-handler boundary (see `domain-exceptions.mdc` / `i18n-l10n.mdc`); `description=` is fine for OpenAPI documentation but must not be relied on as the user-visible error text.

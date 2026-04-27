@@ -1,0 +1,118 @@
+---
+description: Redis 8+ caching — CacheClient Protocol, key conventions, TTL discipline, idempotency, distributed locks.
+globs: app/integrations/cache/**/*.py,app/services/**/*.py,app/api/deps.py
+alwaysApply: false
+---
+
+# Cache & Redis (8+)
+
+## Hard rules
+
+- ❌ NEVER store a key without a TTL. Default to `CACHE_DEFAULT_TTL_SECONDS`; override per use case.
+- ❌ NEVER let cache failure fail the request. On error: log, increment metric, fall back to source.
+- ❌ NEVER cache authenticated user data without a per-user key segment.
+- ❌ NEVER use `pickle` for cache values. JSON or msgpack only.
+- ❌ NEVER call Redis directly from services — go through `CacheClient`.
+
+## CacheClient Protocol
+
+```python
+# app/integrations/cache/base.py
+from typing import Protocol
+
+class CacheClient(Protocol):
+    async def get(self, key: str) -> bytes | None: ...
+    async def set(self, key: str, value: bytes, *, ttl_seconds: int) -> None: ...
+    async def delete(self, *keys: str) -> int: ...
+    async def incr(self, key: str, *, ttl_seconds: int | None = None) -> int: ...
+    async def acquire_lock(self, key: str, *, ttl_seconds: int) -> bool: ...
+    async def release_lock(self, key: str) -> None: ...
+    async def health(self) -> bool: ...
+```
+
+Implementations: `RedisCacheClient` (prod), `InMemoryCache` (tests / fallback).
+
+## Key conventions
+
+```
+<service>:<entity>:<id>:<version>
+```
+
+- `service` = stable app slug (e.g., `boilerplate`).
+- `entity` = aggregate name (`user`, `widget`).
+- `id` = aggregate ID or query hash.
+- `version` = bump (`v2`) to atomically invalidate without DELETE.
+
+Examples:
+
+- `boilerplate:user:profile:550e8400-...:v1`
+- `boilerplate:widget:list:hash<sha256(query)>:v1`
+
+## TTL guidance
+
+| Use case | TTL |
+|---|---|
+| Single-resource cache-aside | 5–15 min |
+| Expensive aggregations | 1 hour |
+| Idempotency keys | 24 hours |
+| Distributed locks | ≥ task max runtime + 30s |
+| Rate-limit counters | window length |
+
+## Patterns
+
+### Cache-aside (default)
+
+```python
+key = f"boilerplate:widget:{widget_id}:v1"
+cached = await self._cache.get(key)
+if cached is not None:
+    return Widget.model_validate_json(cached)
+widget = await self._repo.get_by_id(widget_id)
+if widget is None:
+    raise NotFoundError(...)
+await self._cache.set(key, widget.model_dump_json().encode(), ttl_seconds=600)
+return widget
+```
+
+### Idempotency
+
+- Key: `boilerplate:idempotency:<endpoint>:<key-hash>:v1`.
+- Stored value: response hash + serialized response, TTL 24h.
+- Implemented in a dependency (`get_idempotency_key`) + service helper.
+
+### Distributed lock
+
+- Key: `boilerplate:lock:<resource>:<id>:v1`.
+- Acquire with `SET ... NX EX ttl`. Use only inside services / tasks; never in routes.
+- Always set a TTL ≥ expected critical-section duration; auto-release on crash.
+
+### Rate limiting
+
+- Managed by **slowapi** against the same Redis. Don't roll your own.
+
+## Implementation notes (`redis.asyncio`)
+
+- Use **`redis-py 5+`** with `redis.asyncio.Redis.from_url(...)`. Single client per process.
+- `decode_responses=False` — keep bytes; serialize/deserialize at the boundary.
+- `socket_keepalive=True`, `socket_timeout`, `socket_connect_timeout` configured.
+- `health_check_interval=30` for long-lived connections.
+- Use **RESP3** for richer responses where supported.
+
+## Failure handling
+
+```python
+try:
+    cached = await self._cache.get(key)
+except CacheError:
+    metrics.cache_errors.inc()
+    log.warning("cache.read_failed", key=key)
+    cached = None
+```
+
+The request continues from source. **Never** propagate cache errors as 5xx.
+
+## Testing
+
+- Unit: use `InMemoryCache`.
+- Integration: real `redis_test` from the test stack.
+- Always test the **fallback** path (cache backend down → request still succeeds).

@@ -1,0 +1,68 @@
+---
+description: Repository pattern — one per aggregate root, no commits, no business logic, async SQLAlchemy 2.0+.
+globs: app/repositories/**/*.py
+alwaysApply: false
+---
+
+# Repositories
+
+Persistence-only. Isolate the storage engine so services are testable and the DB can be swapped.
+
+## Hard rules
+
+- ❌ NEVER call `.commit()` — services own the Unit of Work.
+- ❌ NEVER call another repository — cross-aggregate joins live in services or read models.
+- ❌ NEVER include business logic — no validations, no derived fields beyond mapping.
+- ❌ NEVER import `fastapi.*` or any service.
+
+## Required shape
+
+```python
+from collections.abc import Sequence
+from typing import Protocol
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class WidgetRepository(Protocol):
+    async def get_by_id(self, widget_id: UUID) -> Widget | None: ...
+    async def list(self, *, page: Page, filters: WidgetFilters) -> Paginated[Widget]: ...
+    async def add(self, widget: Widget) -> None: ...
+    async def update(self, widget: Widget) -> None: ...
+    async def delete(self, widget_id: UUID) -> None: ...
+    async def exists_by_slug(self, slug: str) -> bool: ...
+
+class SqlAlchemyWidgetRepository(WidgetRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_id(self, widget_id: UUID) -> Widget | None:
+        stmt = select(WidgetModel).where(WidgetModel.id == widget_id)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+```
+
+## Conventions
+
+- **One repository per aggregate root**, not per table.
+- **Protocol + concrete impl** in the same file (`<aggregate>_repo.py`).
+- **Inherit `BaseRepository[Model]`** for generic `get/list/add/update/delete`; override only what's special.
+- **Eager-load explicitly** with `selectinload(...)` / `joinedload(...)` on multi-row reads to avoid N+1.
+- Use `select(...)` + `await session.execute(...)`. Never `Session.query(...)` (that's 1.x).
+- For pagination, return `Paginated[Entity]` (`items`, `total`, `page`, `page_size`).
+- For existence checks: `await session.scalar(select(literal(1)).where(...).limit(1))` — cheaper than fetching the full row.
+- Never hand-build SQL strings; if raw SQL is unavoidable, use `text("...")` with bound params and add a comment with justification.
+
+## Mapping (ORM ↔ Domain)
+
+Pick **one** stance per project and document in an ADR:
+
+- **ORM-as-domain (default for simple CRUD):** repo returns `Model` instances; services treat them as domain entities.
+- **Separate domain layer:** repo maps `Model` ↔ `Entity` at the boundary; services never see `Model`.
+
+Don't mix the two stances within one project.
+
+## Testing
+
+- Integration tests against the test DB (savepoint + rollback per test).
+- Contract tests run the same suite against any implementation of the `Protocol` (e.g. an in-memory repo for unit tests).

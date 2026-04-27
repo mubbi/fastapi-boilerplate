@@ -1,0 +1,111 @@
+---
+description: Security baseline — JWT, password hashing, CORS, rate limit, headers, secret hygiene, container hardening.
+globs: app/api/**/*.py,app/core/security.py,app/core/middleware.py,app/main.py,docker/**/*
+alwaysApply: false
+---
+
+# Security Baseline
+
+## Authentication & authorization
+
+- **JWT** when `AUTH_ENABLED=true`. Library: `python-jose`. Algorithm `HS256` (or `RS256` with managed keys).
+- Access token TTL ≤ 60 minutes; **refresh tokens with rotation** (revoke previous on use).
+- Authorization via dependency:
+  ```python
+  Annotated[CurrentUser, Depends(require_scopes("widget.read"))]
+  ```
+  Never inline `if user.role == "admin":` checks in handlers.
+- Admin endpoints require `is_admin=True` **and** a stricter rate limit.
+
+## Password hashing
+
+- `passlib[bcrypt]` with cost factor ≥ **12**.
+- Never roll your own KDF.
+- `PASSWORD_MIN_LENGTH=12`; reject common passwords (HIBP top-100k list, optional).
+
+## Input
+
+- All bodies via Pydantic with `extra="forbid"`. Reject unknown fields.
+- Strip control chars at the edge (utility in `app/utils/text.py`).
+- Validate path/query params via `Annotated[..., Field(...)]` constraints.
+
+## Output
+
+- Every route declares `response_model`. Never return raw ORM objects. Map fields explicitly.
+- Don't echo back internal IDs unrelated to the requester (IDOR).
+
+## CORS
+
+- `APP_CORS_ORIGINS` is an explicit allowlist. **No wildcard in production.**
+- `APP_CORS_ALLOW_CREDENTIALS=true` only when needed.
+
+## Trusted hosts (prod)
+
+- `TrustedHostMiddleware` with `APP_TRUSTED_HOSTS` set to known domains.
+
+## Security headers (middleware)
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` (prod)
+- `Content-Security-Policy` — strict on `/docs`; project-tuned otherwise.
+- `Permissions-Policy: ()` — deny by default.
+
+## Rate limiting
+
+- Global default via `RATE_LIMIT_DEFAULT` (slowapi, Redis-backed).
+- Stricter per-route on auth/sensitive endpoints (`RATE_LIMIT_AUTH`).
+- 429 response includes `Retry-After`.
+
+## Secrets
+
+- Env vars only; never logged. Logger redactor masks `*_KEY`, `*_SECRET`, `password`, `token`, `authorization`.
+- Use `SecretStr` in settings. Read with `.get_secret_value()` only at the moment of use.
+- Rotate on any suspicion of leak. Runbook in `docs/runbooks/rotate-secret.md`.
+
+## SQL & mass-assignment
+
+- Parameterized queries only via SQLAlchemy. Raw SQL via `text(...)` with bound params + reviewer comment.
+- Pydantic schemas explicitly enumerate writable fields. Never construct ORM objects from raw dicts.
+
+## TLS / transport
+
+- Terminated at Render's load balancer. HTTP→HTTPS redirect; HSTS on.
+- Outbound: `httpx` with TLS verification enabled (default). Never `verify=False`.
+
+## Dependency & secret scanning
+
+- `pip-audit` in CI — fail on **High** CVEs.
+- `bandit -r app` in CI.
+- `detect-secrets` pre-commit + CI.
+- Container scan (`trivy` or Render built-in) — fail on **High**.
+
+## Container hardening
+
+- Non-root `app` user. `chown` only what's required.
+- Multi-stage build; final stage = minimal runtime, no shell tools, no compilers.
+- Read-only root FS where possible (`--read-only` + writable `/tmp` volume).
+- Drop Linux capabilities you don't need; `no-new-privileges`.
+- Image labels: `org.opencontainers.image.revision`, `version`.
+
+## Audit logging
+
+- Security-sensitive actions (login, role change, admin action, secret rotation) logged via a **dedicated audit logger** with non-redacted user ID + IP. Audit logs are retained longer than app logs and never sampled.
+
+## Data retention & compliance
+
+- PII retention defined per data class. Default: < 90 days unless required.
+- Support data export and deletion via service methods (per project, GDPR-style).
+- Never cache authenticated user data without per-user keys.
+
+## Hard rules
+
+- ❌ NEVER log raw `Authorization` header or request body containing credentials.
+- ❌ NEVER use `eval`, `exec`, or `pickle` on user input.
+- ❌ NEVER serve `/docs` publicly in production unless gated.
+- ❌ NEVER commit `.env`, `*.pem`, or any secret. `.gitignore` and `detect-secrets` enforce this.
+
+## Review
+
+This rule defines the **baseline controls**; the active review rubric is in `security-review.mdc` — it lists CRITICAL/HIGH/MEDIUM/LOW findings with CWE/OWASP references, banned patterns, and §20 escalation triggers. Run the review via `/review-security` (Claude Code) or by referencing `@security-review` in Cursor. Pair with `/review-code` for technical correctness.

@@ -1,0 +1,127 @@
+---
+description: SQLAlchemy 2.0+ async style — Mapped[], select(), AsyncSession, naming convention.
+globs: app/models/**/*.py,app/db/**/*.py,app/repositories/**/*.py
+alwaysApply: false
+---
+
+# SQLAlchemy 2.0+ (async)
+
+Target: SQLAlchemy **2.0.49+** with `asyncpg` and Postgres **18+**.
+
+## Hard rules
+
+- ❌ NEVER use 1.x query API (`session.query(...)`).
+- ❌ NEVER use sync engines / sessions on the request path.
+- ❌ NEVER use `__tablename__` without also using `Mapped[...]` + `mapped_column(...)`.
+- ❌ NEVER define a model without a primary key + timestamps mixin.
+- ❌ NEVER let an ORM model leak through `response_model` — map to a Pydantic schema first.
+
+## Engine + session
+
+```python
+# app/db/session.py
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine,
+)
+
+engine: AsyncEngine = create_async_engine(
+    settings.database.url,
+    pool_size=settings.database.pool_size,
+    max_overflow=settings.database.max_overflow,
+    pool_timeout=settings.database.pool_timeout,
+    pool_recycle=settings.database.pool_recycle_seconds,
+    pool_pre_ping=True,
+    echo=settings.database.echo,
+    connect_args={"server_settings": {"statement_timeout": str(settings.database.statement_timeout_ms)}},
+)
+
+session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+```
+
+## Declarative base + naming convention
+
+```python
+# app/db/base.py
+from sqlalchemy import MetaData
+from sqlalchemy.orm import DeclarativeBase
+
+NAMING_CONVENTION = {
+    "ix": "ix_%(table_name)s_%(column_0_N_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_N_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+```
+
+## Model shape
+
+```python
+from datetime import datetime
+from typing import ClassVar
+from uuid import UUID
+from sqlalchemy import String
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+from app.db.mixins import TimestampMixin, UUIDPrimaryKeyMixin
+
+class Widget(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__: ClassVar[str] = "widgets"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+```
+
+## Query patterns
+
+```python
+from sqlalchemy import select, func
+
+# Single row
+stmt = select(Widget).where(Widget.id == widget_id)
+widget = (await session.execute(stmt)).scalar_one_or_none()
+
+# Existence (cheap)
+exists = await session.scalar(select(1).where(Widget.slug == slug).limit(1))
+
+# List with eager load (avoid N+1)
+from sqlalchemy.orm import selectinload
+stmt = select(Widget).options(selectinload(Widget.tags)).order_by(Widget.created_at.desc())
+
+# Count
+total = await session.scalar(select(func.count()).select_from(Widget))
+```
+
+## Transactions
+
+- Service layer owns `async with session.begin():` (Unit of Work).
+- Repositories may `flush()` to obtain IDs, never `commit()`.
+- Default isolation `READ COMMITTED`; use `REPEATABLE READ` / `SERIALIZABLE` only with an ADR.
+
+## Conventions
+
+- Primary keys: UUID v7 (sortable) generated app-side via `app.utils.ids.new_uuid7()`. BIGSERIAL only with an ADR.
+- Timestamps: `created_at`, `updated_at` via `TimestampMixin` (server defaults `now() AT TIME ZONE 'UTC'`).
+- Soft delete only when business demands; otherwise hard delete.
+- JSONB for non-queried metadata only; first-class columns for anything filtered/indexed.
+- All FKs declare `ON DELETE` / `ON UPDATE` explicitly.
+- All columns NOT NULL unless nullability is intentional.
+
+## mypy
+
+Use the SQLAlchemy plugin:
+```toml
+[tool.mypy]
+plugins = ["sqlalchemy.ext.mypy.plugin", "pydantic.mypy"]
+```
+
+## Performance hooks
+
+- N+1 detector in tests via SQLAlchemy event hook (`before_cursor_execute`) raises if more than N queries per test.
+- `pg_stat_statements` enabled in dev/prod for query profiling.

@@ -1,0 +1,140 @@
+---
+description: pytest + pytest-asyncio + httpx — test layout, isolation guardrail, fixtures, coverage gates.
+globs: tests/**/*.py,pyproject.toml,conftest.py
+alwaysApply: false
+---
+
+# Testing — pytest
+
+## Layers
+
+- `tests/unit/` — services, repositories with fakes, utils. **No** real network, **no** dev DB. Mark `@pytest.mark.unit`.
+- `tests/integration/` — DB + Redis + MailHog via `docker-compose.test.yml`. Mark `@pytest.mark.integration`.
+- `tests/api/` — `httpx.AsyncClient` against the FastAPI app with DI overrides. Mark `@pytest.mark.api`.
+- `tests/contract/` — provider Protocol contract tests; recorded fixtures (vcrpy / saved JSON) for external APIs.
+
+## pyproject.toml settings
+
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers --strict-config -p no:cacheprovider"
+markers = [
+    "unit: fast unit tests, no I/O",
+    "integration: requires test DB / Redis",
+    "api: HTTP-level tests against the FastAPI app",
+    "contract: provider Protocol contract tests",
+    "slow: long-running",
+]
+```
+
+## Isolation guardrail (mandatory in conftest.py)
+
+```python
+# tests/conftest.py
+import os, pytest
+from urllib.parse import urlparse
+
+@pytest.fixture(scope="session", autouse=True)
+def _require_test_database() -> None:
+    url = os.getenv("DATABASE_URL", "")
+    host_db = urlparse(url).path.lstrip("/")
+    host = urlparse(url).hostname or ""
+    allowed = (
+        "_test" in host_db
+        or host in {"postgres_test", "localhost", "127.0.0.1"}
+        and host_db.endswith("_test")
+    )
+    if not allowed:
+        raise RuntimeError(
+            f"Refusing to run tests against non-test database: {url!r}. "
+            "Tests must use DATABASE_URL_TEST."
+        )
+```
+
+This is a hard guardrail — **never** weaken it.
+
+## Fixtures (canonical names)
+
+```python
+@pytest.fixture(scope="session")
+async def engine() -> AsyncEngine:
+    eng = create_async_engine(os.environ["DATABASE_URL_TEST"], poolclass=NullPool)
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield eng
+    await eng.dispose()
+
+@pytest.fixture
+async def session(engine) -> AsyncIterator[AsyncSession]:
+    async with engine.connect() as conn:
+        trans = await conn.begin()
+        async with AsyncSession(bind=conn, expire_on_commit=False) as s:
+            await conn.begin_nested()  # SAVEPOINT
+            yield s
+        await trans.rollback()
+
+@pytest.fixture
+def app(real_app, session, fake_cache, fake_email):
+    real_app.dependency_overrides[get_db_session] = lambda: session
+    real_app.dependency_overrides[get_cache] = lambda: fake_cache
+    real_app.dependency_overrides[get_email_sender] = lambda: fake_email
+    yield real_app
+    real_app.dependency_overrides.clear()
+
+@pytest.fixture
+async def client(app) -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient(app=app, base_url="http://test") as c:
+        yield c
+```
+
+## Hard rules
+
+- ❌ NEVER inline literal DB rows in tests. Use **factories** (`tests/factories/`) and **seeders** (`tests/seeders/`).
+- ❌ NEVER hit the network. Use `httpx.MockTransport`, `respx`, or recorded fixtures.
+- ❌ NEVER call real SMTP. Use `NullEmailSender` or assert against MailHog.
+- ❌ NEVER set `CELERY_TASK_ALWAYS_EAGER=true` only for the test you're writing — set it once for the test session.
+- ❌ NEVER share state between tests; each test starts in a known state and leaves no trace.
+- ❌ NEVER assert on log strings; assert on structured fields if logging behavior matters.
+- ❌ NEVER assert on translated copy directly (`assert r.json()["error"]["message"] == "Widget abc does not exist"`). Assert on stable `error.code` and (when relevant) `Content-Language`. Translated `message` content is verified separately by catalog-hygiene tests.
+
+## i18n testing patterns
+
+- **Unit tests:** inject `EchoTranslator` (returns the key unchanged); assert the code path called the translator with the expected key + named params.
+- **API / integration tests:** parameterize over `LOCALES_ENABLED`. Verify `Content-Language` header echoes the request locale; verify `error.code` is locale-independent.
+  ```python
+  @pytest.mark.parametrize("locale", ["en", "ar"])
+  async def test_widget_not_found_is_localized(client, locale):
+      r = await client.get(f"/api/v1/widgets/{uuid4()}", headers={"Accept-Language": locale})
+      assert r.status_code == 404
+      assert r.headers["Content-Language"] == locale
+      assert r.json()["error"]["code"] == "WIDGET_NOT_FOUND"
+  ```
+- **Email tests:** assert subject + body + `dir=` attribute per locale (`dir="rtl"` for `ar`, `dir="ltr"` for `en`).
+- **Catalog hygiene** (CI gate `make i18n-check`):
+  - `messages.pot` is in sync with the source (`pybabel extract` produces no diff).
+  - Every key in `messages.pot` exists in every catalog.
+  - Translation completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` per locale.
+  - All catalogs compile (`pybabel compile`).
+
+## Coverage gates (CI)
+
+- 80% global.
+- 85% on `services/`.
+- Coverage on **diff** ≥ 90% for new code.
+
+## Determinism
+
+- Use `freezegun` or the injected `Clock` Protocol for time-dependent code.
+- Seed `random` and `faker` if order matters.
+- `pytest-xdist` for parallelism — make sure fixtures are process-safe.
+
+## Async tests
+
+- `asyncio_mode = "auto"` — every `async def test_*` is treated as an asyncio test.
+- For event loop scope across module/session, use `pytest-asyncio` 0.23+ `loop_scope` marker.
+
+## Smoke tests
+
+- Post-deploy: hit `/ready` and a small set of canary endpoints. Defined in `tests/smoke/` (or similar) and run against the deployed environment from CI.

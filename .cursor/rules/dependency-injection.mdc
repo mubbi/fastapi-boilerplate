@@ -1,0 +1,94 @@
+---
+description: FastAPI-native DI via app/core/container.py and app/api/deps.py — no third-party DI framework.
+globs: app/core/container.py,app/api/deps.py,app/main.py
+alwaysApply: false
+---
+
+# Dependency Injection
+
+The mechanism is FastAPI's `Depends` + a thin **composition root** in `app/core/container.py`. Boring on purpose.
+
+## Wiring layers (top → bottom)
+
+1. **Settings** — `get_settings()` (`@lru_cache`), returns the validated `Settings`.
+2. **Infra clients** — `get_db_session()`, `get_redis()`, `get_http_client()` yield managed resources with proper teardown.
+3. **Repositories** — `get_widget_repo(session = Depends(get_db_session))`.
+4. **Services** — `get_widget_service(repo = Depends(get_widget_repo), cache = Depends(get_cache), ...)`.
+5. **Router** — `svc: Annotated[WidgetService, Depends(get_widget_service)]`.
+
+## Required shape
+
+```python
+# app/core/container.py
+from functools import lru_cache
+from typing import Annotated, AsyncIterator
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import Settings, get_settings
+from app.core.clock import Clock, SystemClock
+from app.db.session import session_factory
+from app.integrations.cache.base import CacheClient
+from app.integrations.cache.redis_cache import RedisCacheClient
+from app.repositories.widget_repo import SqlAlchemyWidgetRepository, WidgetRepository
+from app.services.widget_service import WidgetService
+
+async def get_db_session() -> AsyncIterator[AsyncSession]:
+    async with session_factory() as session:
+        yield session
+
+@lru_cache(maxsize=1)
+def get_clock() -> Clock:
+    return SystemClock()
+
+def get_cache(settings: Annotated[Settings, Depends(get_settings)]) -> CacheClient:
+    return RedisCacheClient.from_url(settings.redis.url)
+
+def get_widget_repo(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> WidgetRepository:
+    return SqlAlchemyWidgetRepository(session)
+
+def get_widget_service(
+    repo: Annotated[WidgetRepository, Depends(get_widget_repo)],
+    cache: Annotated[CacheClient, Depends(get_cache)],
+    clock: Annotated[Clock, Depends(get_clock)],
+) -> WidgetService:
+    return WidgetService(repo=repo, cache=cache, clock=clock)
+```
+
+## Hard rules
+
+- ❌ NEVER `lru_cache` a function that holds per-request state (DB session, request scope).
+- ❌ NEVER import a router from `container.py` (avoid cycles).
+- ❌ NEVER bypass DI with `from app.X import some_singleton`.
+- ❌ NEVER use a third-party DI container (no `dependency-injector`, no `injector`).
+- ✅ Every dep MUST be overridable via `app.dependency_overrides` for tests.
+
+## Test override pattern
+
+```python
+# tests/conftest.py
+@pytest.fixture
+def app(real_app):
+    real_app.dependency_overrides[get_widget_repo] = lambda: InMemoryWidgetRepository()
+    real_app.dependency_overrides[get_cache] = lambda: InMemoryCache()
+    yield real_app
+    real_app.dependency_overrides.clear()
+```
+
+## Celery tasks
+
+Tasks build the **same** dependency graph in `app/workers/tasks/*` by calling the factory functions directly:
+
+```python
+# pseudo
+async def _run() -> None:
+    async for session in get_db_session():
+        repo = SqlAlchemyWidgetRepository(session)
+        service = WidgetService(repo=repo, ...)
+        await service.do_thing()
+```
+
+This keeps API and worker behavior identical.

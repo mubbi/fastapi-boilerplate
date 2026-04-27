@@ -1,0 +1,99 @@
+---
+description: API design contract — versioning, error envelope, status codes, headers, idempotency.
+globs: app/api/**/*.py,app/schemas/common.py,app/core/middleware.py,app/core/exceptions.py
+alwaysApply: false
+---
+
+# API Design Contract
+
+## Versioning
+
+- Business endpoints under `/api/v{N}` (initial: `/api/v1`).
+- Platform endpoints unversioned: `/health`, `/ready`, `/metrics`. Mirrored under `/api/v1/health` and `/api/v1/ready` for clients pinned to v1.
+- Breaking changes → new version (`/api/v2`); never break v1.
+
+## Error envelope
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Human-readable summary",
+    "details": { "field": "reason" },
+    "request_id": "uuid",
+    "timestamp": "2026-04-27T19:00:00Z"
+  }
+}
+```
+
+- `code` is **stable** (clients depend on it). Use SCREAMING_SNAKE_CASE.
+- Mapped centrally by `register_exception_handlers(app)`; do not hand-build envelopes in routes.
+
+## Success shape
+
+- Resource endpoints return the resource directly.
+- List endpoints return:
+  ```json
+  { "items": [...], "page": { "number": 1, "size": 20, "total": 123 } }
+  ```
+
+## Headers (set by middleware)
+
+- `X-Request-ID` — per-request correlation (accepted from client if valid, else generated).
+- `X-API-Version` — `APP_VERSION`.
+- `Content-Language` — resolved locale (BCP-47), echoed on every response that may contain user-visible text. See `i18n-l10n.mdc`.
+- Security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security` (prod), `Content-Security-Policy` (strict on `/docs`).
+
+## Locale negotiation
+
+- Clients send `Accept-Language: ar, en;q=0.9` and / or `?lang=ar`. Server resolves the locale (priority in `i18n-l10n.mdc`), echoes `Content-Language`.
+- `error.message` is **translated** to the resolved locale; `error.code` is **always** locale-independent. Clients programmatic-match on `code`.
+- Pagination labels and any other server-rendered text use the translator.
+- Raw API dates/IDs stay locale-independent (ISO 8601 UTC). User-facing date/number/currency formatting uses Babel via `Translator.format_*`.
+
+## Pagination
+
+- `?page=1&page_size=20` with `page_size` ≤ **100** (enforced via `Depends(get_pagination)`).
+- Cursor-based for high-cardinality lists — document per endpoint.
+
+## Filtering / sorting
+
+- `?filter[field]=value`, `?sort=field,-other`. Document allowed fields per endpoint.
+- Reject unknown filter/sort keys (Pydantic on the dep).
+
+## Idempotency
+
+- Mutating endpoints accept `Idempotency-Key` header.
+- Service hashes the `(endpoint, key)` pair; first response is cached in Redis for **24h**; later requests return the same response without re-running side effects.
+
+## Content negotiation
+
+- JSON only (`application/json`); `415 Unsupported Media Type` otherwise.
+- Dates: RFC 3339 / ISO 8601, **always UTC** with `Z` suffix.
+- Field naming: **snake_case** in JSON; URL paths **kebab-case**; collections plural lowercase nouns.
+
+## HTTP status codes (use exactly these)
+
+| Code | When |
+|---|---|
+| 200 | Read or RPC success with body |
+| 201 | Created (set `Location`) |
+| 202 | Accepted (queued async) |
+| 204 | Success, no body |
+| 400 | Malformed request (rare; Pydantic catches first) |
+| 401 | Auth missing / invalid |
+| 403 | Authenticated but not authorized |
+| 404 | Not found |
+| 409 | Conflict (duplicate / version mismatch) |
+| 415 | Unsupported media type |
+| 422 | Validation failed (Pydantic default) |
+| 429 | Rate limited |
+| 500 | Unexpected server error |
+| 502 / 504 | Upstream failure / timeout |
+| 503 | Not ready / draining |
+
+## OpenAPI
+
+- Every route has `summary`, `description`, `response_model`, **and** `responses={...}` for each documented error code.
+- `/docs` and `/redoc` enabled in non-prod; gated or disabled in prod via `APP_DOCS_ENABLED`.
+- `make openapi` exports `openapi.json` for CI consumers; PR shows a diff.

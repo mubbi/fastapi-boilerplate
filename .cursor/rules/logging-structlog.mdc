@@ -1,0 +1,111 @@
+---
+description: structlog 25.5+ — JSON logs to stdout, request_id propagation, secret redaction.
+globs: app/core/logging.py,app/**/*.py
+alwaysApply: false
+---
+
+# Logging — structlog (25.5+)
+
+JSON to stdout. One log = one line. No `print`, no stdlib logging directly from app code (configure it once to forward into structlog).
+
+## Hard rules
+
+- ❌ NEVER `print(...)` in `app/`.
+- ❌ NEVER log secrets, tokens, passwords, API keys, raw request bodies, or full email recipients.
+- ❌ NEVER use f-strings to inject variables into the log message — pass them as kwargs so they appear as JSON fields:
+  - ✅ `log.info("widget.created", widget_id=str(w.id), tenant=t)`
+  - ❌ `log.info(f"widget {w.id} created for {t}")` — unsearchable, no structure.
+- ❌ NEVER configure logging at function call time. Configure once at app/worker startup.
+
+## Required configuration (app + worker share)
+
+```python
+# app/core/logging.py
+import structlog, logging, sys
+from structlog.contextvars import merge_contextvars
+
+def configure_logging(*, level: str, format_: str) -> None:
+    timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
+    shared = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        timestamper,
+        _redact,
+    ]
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if format_ == "json"
+        else structlog.dev.ConsoleRenderer(colors=True)
+    )
+    structlog.configure(
+        processors=[*shared, renderer],
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level)),
+        cache_logger_on_first_use=True,
+    )
+    logging.basicConfig(level=level, stream=sys.stdout, format="%(message)s")
+```
+
+## Required fields on every log
+
+`timestamp`, `level`, `logger`, `message`, `request_id`, `trace_id`, `span_id`, `app_env`, `app_version`, `service`, `locale` (when set by `LocaleMiddleware`; absent for non-HTTP startup logs).
+
+These are bound globally (env, version) and per-request via `structlog.contextvars`:
+
+```python
+# Middleware
+from structlog.contextvars import bind_contextvars, clear_contextvars
+
+async def request_context_middleware(request, call_next):
+    request_id = request.headers.get("X-Request-ID") or new_uuid7().hex
+    clear_contextvars()
+    bind_contextvars(
+        request_id=request_id,
+        path=request.url.path,
+        method=request.method,
+        locale=getattr(request.state, "locale", None),   # set by LocaleMiddleware first
+    )
+    try:
+        response = await call_next(request)
+    finally:
+        clear_contextvars()
+    response.headers["X-Request-ID"] = request_id
+    return response
+```
+
+## Levels
+
+- `DEBUG` — only outside production. Sampling 10% in staging; never in local.
+- `INFO` — start/finish of use cases, important state changes.
+- `WARNING` — recoverable issues, degraded paths taken.
+- `ERROR` — unhandled exceptions; always with stack trace (`exc_info=True`).
+- `CRITICAL` — pages on-call. Use sparingly.
+
+## Redactor processor
+
+A processor strips known-sensitive keys before serialization:
+
+```python
+SENSITIVE = {"password", "token", "authorization", "api_key", "secret"}
+def _redact(_, __, event_dict):
+    for k in list(event_dict):
+        if any(s in k.lower() for s in SENSITIVE):
+            event_dict[k] = "***"
+    return event_dict
+```
+
+## Celery integration
+
+- Bind `task_id`, `task_name`, `args_redacted`, and `locale` (when present in kwargs) via `task_prerun` signal; clear on `task_postrun`.
+- Same processors as the API; one config function called from `celery_app.on_after_configure`.
+
+## Correlation across services
+
+- Propagate `X-Request-ID` to outbound HTTP calls (httpx event hook).
+- Pass `request_id` through to enqueued Celery tasks (kwarg or header) and re-bind it in the task.
+
+## Don't
+
+- ❌ Don't log every successful request line at INFO; metrics cover that. Log ERROR on failures and INFO on important domain events.
+- ❌ Don't log inside loops without rate-limiting.
+- ❌ Don't keep `DEBUG` logs that print large payloads — they will end up in prod by accident eventually.

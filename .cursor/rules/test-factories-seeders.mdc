@@ -1,0 +1,119 @@
+---
+description: factory_boy factories + composed seeders — single source of truth for "what realistic rows look like".
+globs: tests/factories/**/*.py,tests/seeders/**/*.py,scripts/seed_dev_data.py
+alwaysApply: false
+---
+
+# Test Factories & Seeders
+
+## Factories (`tests/factories/`)
+
+**Rule:** one factory per aggregate, subclassing `BaseFactory`. Factories produce **realistic** data; tests override only the fields that matter.
+
+### BaseFactory
+
+```python
+# tests/factories/base.py
+import factory
+from factory.alchemy import SQLAlchemyModelFactory
+from sqlalchemy.orm import scoped_session, sessionmaker
+
+class BaseFactory(SQLAlchemyModelFactory):
+    class Meta:
+        abstract = True
+        sqlalchemy_session_persistence = "flush"   # let services own commit
+        sqlalchemy_session = None                   # bound by the session fixture
+
+# tests/conftest.py
+@pytest.fixture(autouse=True)
+def _bind_factories(session):
+    BaseFactory._meta.sqlalchemy_session = session
+    yield
+    BaseFactory._meta.sqlalchemy_session = None
+```
+
+### Per-aggregate factory
+
+```python
+# tests/factories/widget_factory.py
+import factory
+from app.models.widget import Widget
+from tests.factories.base import BaseFactory
+
+class WidgetFactory(BaseFactory):
+    class Meta:
+        model = Widget
+
+    name = factory.Faker("catch_phrase")
+    slug = factory.Sequence(lambda n: f"widget-{n}")
+    quantity = 0
+
+    class Params:
+        out_of_stock = factory.Trait(quantity=0)
+        bulk = factory.Trait(quantity=factory.Faker("random_int", min=100, max=1000))
+```
+
+### Conventions
+
+- `factory.Sequence` for unique identifiers; `Faker` for realistic values; `LazyAttribute` for derived fields.
+- `Trait` for boolean variants (`admin`, `paid`, `expired`).
+- `SubFactory` / `RelatedFactory` for graph creation (e.g., `User → Organization → Membership`).
+- **Factories never import `fastapi.*` or services** — they only build models or DTOs.
+
+### `build()` vs `create()`
+
+- **`build()`**: returns an unpersisted instance — use in unit tests that don't touch the DB.
+- **`create()`**: persists via the session — use in integration / API tests.
+- **`create_batch(n, ...)`**: creates `n` instances; use sparingly for realism.
+
+## Seeders (`tests/seeders/`)
+
+Seeders **orchestrate factories** into coherent scenarios. They don't replace factories; they compose them.
+
+### Shape
+
+```python
+# tests/seeders/database_seeder.py
+from dataclasses import dataclass
+from uuid import UUID
+
+@dataclass
+class MinimalScenario:
+    user_id: UUID
+    widget_ids: list[UUID]
+
+def seed_minimal(session) -> MinimalScenario:
+    user = UserFactory()
+    widgets = WidgetFactory.create_batch(3)
+    session.flush()
+    return MinimalScenario(user_id=user.id, widget_ids=[w.id for w in widgets])
+
+def seed_user_with_paid_invoices(session, *, count: int = 3) -> ...:
+    user = UserFactory()
+    invoices = InvoiceFactory.create_batch(count, customer=user, paid=True)
+    session.flush()
+    return ...
+```
+
+### Conventions
+
+- Public seeders are named `seed_<scenario_name>` and return a typed dataclass with the IDs the test will assert on.
+- Seeders are imported by **integration tests**, **API tests**, and `scripts/seed_dev_data.py` — single source of truth.
+- Seeders never live in production code (`app/`).
+- If five tests need the same fixture state, add a seeder; never duplicate field lists across tests.
+
+### Dev seed reuse
+
+`scripts/seed_dev_data.py` calls the **same** factory definitions with a different session factory (the dev DB). This keeps "realistic data" identical between dev and tests.
+
+## Hard rules
+
+- ❌ NEVER hand-construct ORM objects in tests — use a factory.
+- ❌ NEVER duplicate scenario builders — use a seeder.
+- ❌ NEVER persist via factories outside a test session — they need an active SQLAlchemy session bound by a fixture.
+- ❌ NEVER include business logic inside factories or seeders. They build data; assertions live in tests.
+- ❌ NEVER use `factory.LazyFunction(datetime.utcnow)` — use the injected `Clock` or `freezegun` for determinism.
+
+## Faker seeds
+
+- For determinism, a session-scoped fixture seeds `Faker.seed(0)`. If a test needs randomness, opt in explicitly.

@@ -1,0 +1,75 @@
+---
+description: Directory layout and where each kind of code belongs.
+alwaysApply: true
+---
+
+# Project Structure
+
+```
+app/
+  api/v1/            # Routers — HTTP layer only
+    deps.py          # Shared FastAPI dependencies
+    router.py        # Aggregates v1 routers
+    system.py        # /health, /ready, /metrics
+  core/              # Cross-cutting infra
+    config.py        container.py     logging.py     tracing.py
+    metrics.py       security.py      rate_limit.py  exceptions.py
+    middleware.py    lifespan.py      constants.py   clock.py
+    i18n.py          # Translator Protocol + Babel locale resolver (see i18n-l10n.mdc)
+  db/                # Engine, session, base, mixins
+  models/            # SQLAlchemy ORM models (per-aggregate file)
+  schemas/           # Pydantic DTOs (request/response/internal)
+  repositories/      # Persistence layer; one per aggregate root
+  services/          # Business logic; one per bounded context
+  integrations/      # Adapters: cache/, email/, http/, ...
+  events/            # Domain events: types.py, registry.py, publisher.py
+  workers/           # Celery: celery_app.py, beat_schedule.py, tasks/
+  locales/           # gettext catalogs: <locale>/LC_MESSAGES/messages.{po,mo} (see i18n-l10n.mdc)
+    en/LC_MESSAGES/  # English source/default
+    ar/LC_MESSAGES/  # Arabic
+  templates/
+    email/           # Per-template, per-locale: <name>/{en,ar}/{subject,html,txt}.j2
+  utils/             # Pure helpers; no business logic
+tests/
+  factories/         # factory_boy classes
+  seeders/           # Composed scenarios using factories
+  fakes/             # In-memory Protocol implementations
+  unit/  integration/  api/  contract/
+alembic/             # Migrations
+docker/              # Dockerfile, entrypoint, healthcheck
+babel.cfg            # Babel extraction config (Python + Jinja2)
+docs/
+  tech-architecture-requirements.md   # Authoritative spec
+  architecture-decisions/             # ADRs
+  runbooks/
+```
+
+## Where new code goes
+
+| Kind of change | Folder |
+|---|---|
+| HTTP route | `app/api/v1/<resource>.py` (mounted in `router.py`) |
+| Business logic | `app/services/<context>_service.py` |
+| DB access | `app/repositories/<aggregate>_repo.py` |
+| ORM model | `app/models/<aggregate>.py` |
+| Pydantic DTO | `app/schemas/<aggregate>.py` |
+| External API client | `app/integrations/<provider>/` |
+| Background task | `app/workers/tasks/<context>_tasks.py` |
+| Domain event | `app/events/types.py` + register in `app/events/registry.py` |
+| Email template | `app/templates/email/<name>/<locale>/{subject,html,txt}.j2` (one subdir per locale) |
+| Translation key | `_("...")` in code/template → `make i18n-extract && make i18n-update` → translate `app/locales/<locale>/LC_MESSAGES/messages.po` → `make i18n-compile` |
+| New locale | `LOCALES_ENABLED += ["xx"]` + `app/locales/xx/LC_MESSAGES/` + email per-locale subdirs (no app code change) |
+| Settings | extend `app/core/config.py` (a sub-`BaseModel`) |
+| Cross-cutting helper | `app/core/` if infra; `app/utils/` if pure |
+| Test factory | `tests/factories/<aggregate>_factory.py` |
+| Test scenario | `tests/seeders/` |
+| Migration | `alembic/versions/<rev>_<slug>.py` (via `make migration`) |
+| ADR | `docs/architecture-decisions/NNNN-title.md` |
+| Runbook | `docs/runbooks/<topic>.md` |
+
+## Files that must stay empty in the boilerplate
+
+- `app/models/__init__.py` (besides re-exports added per project)
+- `app/repositories/__init__.py` (besides `base.py`)
+- `app/workers/tasks/__init__.py` (besides `events_tasks.py`)
+- `app/services/__init__.py` (besides `system_service.py`)
