@@ -8,7 +8,7 @@ alwaysApply: false
 
 Authoritative rubric for **security** review. Pair with `code-review.mdc` (technical correctness) for full coverage.
 
-> **Stack lock:** Python 3.14+, FastAPI 0.136+, Pydantic v2, SQLAlchemy 2.0+ (asyncpg), Redis 8+, Celery 5.6+, structlog, OpenTelemetry, httpx, **python-jose** (JWT), **passlib[bcrypt]**, **slowapi**, **pip-audit / bandit / detect-secrets / trivy** in CI. Spec: `docs/tech-architecture-requirements.md` §12 (Security).
+> **Stack lock:** Python 3.14.4+, FastAPI 0.136.1+, Pydantic 2.13.3+, SQLAlchemy 2.0.49+ (asyncpg), Redis 8.0.16+, Celery 5.6.3+, structlog 25.5.0+, OpenTelemetry 1.24+, httpx 0.28.1+, **python-jose** (JWT), **passlib[bcrypt]**, **slowapi 0.1.9+**, **pip-audit / bandit / detect-secrets / trivy** in CI. Spec: `docs/tech-architecture-requirements.md` §12 (Security).
 
 ## Severity ladder
 
@@ -47,7 +47,7 @@ If clean: `Security review: clean. Verdict: APPROVE.`
 
 ---
 
-## §1 Authentication (CRITICAL — see `security.mdc`, spec §12.1)
+## §1 Authentication (CRITICAL — see `security.mdc`, spec §12 item 3)
 
 - [ ] JWT verification uses `python-jose` with **explicit** `algorithms=[settings.jwt_algorithm]`. **Never** pass `algorithms=None` or accept `alg: none`.
 - [ ] If `HS256`: secret is `SecretStr` from settings, never logged, ≥ 256 bits of entropy.
@@ -109,7 +109,7 @@ If clean: `Security review: clean. Verdict: APPROVE.`
 - [ ] No secrets in container images (`docker history` clean). Build args are not used for secrets.
 - [ ] No secrets in logs. Structlog redactor masks: `*_KEY`, `*_SECRET`, `password`, `token`, `authorization`, `cookie`, `set-cookie`, `x-api-key`, JWT-shaped strings.
 - [ ] No secrets in OpenTelemetry span attributes or Sentry breadcrumbs (PII processor configured).
-- [ ] Render env vars set as **secret** (not plain) for production; rotation runbook present in `docs/runbooks/rotate-secret.md`.
+- [ ] Render env vars set as **secret** (not plain) for production; secret-rotation runbook exists under `docs/runbooks/` per spec §18.5.
 - [ ] No secrets in error messages returned to clients.
 
 ## §8 Cryptography (HIGH)

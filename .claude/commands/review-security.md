@@ -24,6 +24,8 @@ Run a structured **security-only** review of the current change set against the 
 /review-security --infra                                    # focused Dockerfile / compose / render / pipelines sweep
 ```
 
+`--deps` and `--infra` are scope hints for the reviewer, not flags for a standalone binary.
+
 ## Rubric (mirrors `.cursor/rules/security-review.mdc`)
 
 The reviewer walks every section. Highlights:
@@ -83,7 +85,7 @@ The reviewer walks every section. Highlights:
 
 - **APPROVE** — clean. No findings above LOW.
 - **REQUEST CHANGES** — one or more findings at MEDIUM / HIGH that need fixes before merge.
-- **BLOCK + ESCALATE** — at least one CRITICAL or any §20 escalation trigger fired. Do not merge. Notify on-call. May require secret rotation, branch quarantine, or history rewrite.
+- **BLOCK + ESCALATE** — at least one CRITICAL or any `security-review.mdc` §20 escalation trigger fired. Do not merge. Notify on-call. May require secret rotation, branch quarantine, or history rewrite.
 
 ## Escalation triggers (auto-BLOCK)
 
@@ -108,7 +110,7 @@ If any of these fires, the reviewer returns `Verdict: BLOCK + ESCALATE` and list
 
 ## When to run
 
-- Before opening any PR that touches: `app/api/**`, `app/core/security.py`, `app/core/middleware.py`, `app/core/config.py`, `app/integrations/**`, `app/repositories/**`, `Dockerfile`, `docker-compose*.yml`, `render.yaml`, `bitbucket-pipelines.yml`, `pyproject.toml`, `uv.lock`, `.env.example`, `.pre-commit-config.yaml`.
+- Before opening any PR that touches: `app/api/**`, `app/core/security.py`, `app/core/middleware.py`, `app/core/config.py`, `app/integrations/**`, `app/repositories/**`, `Dockerfile`, `docker-compose*.yml`, `render.yaml`, `bitbucket-pipelines.yml`, dependency manifests / lockfiles (`pyproject.toml`, `uv.lock`, `requirements*.txt`, etc.), `.env.example`, `.pre-commit-config.yaml`.
 - Whenever you add a new dependency (run with `--deps`).
 - Whenever you change auth, session, password, JWT, CSRF, or rate-limit logic.
 - After dependency upgrades (CVE delta).

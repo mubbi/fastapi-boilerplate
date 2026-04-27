@@ -8,7 +8,7 @@ alwaysApply: false
 
 Authoritative rubric for **technical** code review (correctness, design, quality). Security-specific review lives in `security-review.mdc` — do both for any non-trivial change.
 
-> **Stack lock (do not drift):** Python 3.14+, FastAPI 0.136+, Pydantic v2 (2.13+), SQLAlchemy 2.0+ (async + asyncpg), Alembic 1.18+, PostgreSQL 18+, Redis 8+, Celery 5.6+, structlog 25.5+, OpenTelemetry 1.24+, httpx 0.28+, tenacity 9.1+, Babel 2.16+. Spec: `docs/tech-architecture-requirements.md`.
+> **Stack lock (do not drift):** Python 3.14.4+, FastAPI 0.136.1+, Pydantic 2.13.3+, SQLAlchemy 2.0.49+ (async + asyncpg), Alembic 1.18.4+, PostgreSQL 18.3+, Redis 8.0.16+, Celery 5.6.3+, structlog 25.5.0+, OpenTelemetry 1.24+, httpx 0.28.1+, tenacity 9.1.4+, Babel 2.16+. Spec: `docs/tech-architecture-requirements.md` §2.
 
 ## Reviewer mindset
 
@@ -79,7 +79,7 @@ If everything passes: `Code review: clean. Verdict: APPROVE.`
 ## §4 Domain modeling & exceptions (BLOCKERS — see `domain-exceptions.mdc`, `services-layer.mdc`)
 
 - [ ] Services raise `DomainError` subclasses with stable `code` + gettext-key `message`. No `HTTPException` outside the global handler.
-- [ ] `DomainError.code` is locale-independent and stable (`errors.user.email_already_taken`); `message` is the gettext key with named params.
+- [ ] `DomainError.code` is locale-independent and stable (`USER_EMAIL_ALREADY_TAKEN`); `message` is the gettext key/source with named params.
 - [ ] No business decisions live in routers, schemas, or repositories.
 - [ ] Domain invariants are enforced **inside** the aggregate boundary, not by the caller.
 - [ ] Use cases are named after the action, not CRUD (`mark_invoice_paid`, not `update_invoice`).
@@ -128,7 +128,7 @@ If everything passes: `Code review: clean. Verdict: APPROVE.`
 - [ ] `Annotated[type, ...]` for metadata-bearing types.
 - [ ] No `Any` without an inline justification comment.
 - [ ] All public functions / methods are typed (mypy strict passes).
-- [ ] Generics use the modern syntax (`def f[T](x: T) -> T:` if Python 3.12+ syntax is approved by repo policy, else `TypeVar`).
+- [ ] Generics use the modern Python 3.14 syntax for new code (`def f[T](x: T) -> T:`), not legacy `TypeVar` boilerplate unless required by a library API.
 - [ ] No implicit `Optional` (`def f(x: int = None)` is rejected).
 
 ## §10 Settings / config (BLOCKER — see `pydantic-settings.mdc`, `environment-config.mdc`)
@@ -181,7 +181,7 @@ If everything passes: `Code review: clean. Verdict: APPROVE.`
 
 - [ ] Service depends on `EmailSender` Protocol; never imports `aiosmtplib` directly.
 - [ ] `send_template(..., locale=...)` is called with an **explicit** locale.
-- [ ] Templates exist under `app/templates/email/<id>/<locale>/{subject.txt,body.html,body.txt}` for **every** locale in `LOCALES_ENABLED`.
+- [ ] Templates exist under `app/templates/email/<id>/<locale>/{subject.j2,html.j2,txt.j2}` for **every** locale in `LOCALES_ENABLED`.
 - [ ] HTML emails set `dir="rtl"` for RTL locales via `Translator.is_rtl(locale)` — never hardcoded.
 - [ ] Tests use `NullEmailSender` (unit) or MailHog (integration); never live SMTP.
 

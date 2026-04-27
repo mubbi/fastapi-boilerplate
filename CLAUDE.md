@@ -10,7 +10,7 @@ This file is auto-loaded by **Claude Code** at the start of every session. It is
 ## 1. Project at a glance
 
 - **What:** Production-grade FastAPI backend boilerplate. Domain code is added per project; the boilerplate ships only platform endpoints (`/health`, `/ready`, `/metrics`) and the architectural skeleton.
-- **Stack (locked, see §2 of the spec):** Python 3.14+, FastAPI 0.136+, Pydantic v2 (2.13+), SQLAlchemy 2.0+ (async + asyncpg), Alembic 1.18+, PostgreSQL 18+, Redis 8+, Celery 5.6+, structlog 25.5+, OpenTelemetry 1.24+, httpx 0.28+, tenacity 9.1+, **Babel 2.16+ (i18n/l10n; English + Arabic)**.
+- **Stack (locked, exact floors in spec §2):** Python 3.14.4+, FastAPI 0.136.1+, Pydantic 2.13.3+, SQLAlchemy 2.0.49+ (async + asyncpg), Alembic 1.18.4+, PostgreSQL 18.3+, Redis 8.0.16+, Celery 5.6.3+, structlog 25.5.0+, OpenTelemetry 1.24+, httpx 0.28.1+, tenacity 9.1.4+, **Babel 2.16+ (i18n/l10n; English + Arabic)**.
 - **Deploy:** Bitbucket Pipelines → render.com. App image runs three roles via `SERVICE_ROLE`: `web`, `worker`, `beat`.
 - **DX:** `make setup ENV=local|test|production` is the **single** entrypoint. Tests use an isolated stack (`docker-compose.test.yml`); never the dev DB.
 - **Languages:** English (`en`, default + fallback) and Arabic (`ar`, RTL). Locale resolution is centralized; copy lives in `app/locales/<locale>/LC_MESSAGES/messages.po` (compiled to `.mo` at build time). See spec §11 and `.cursor/rules/i18n-l10n.mdc`.
@@ -20,11 +20,11 @@ This file is auto-loaded by **Claude Code** at the start of every session. It is
 These are review-rejecting violations:
 
 1. **Layered architecture** — Router → Service → Repository → Persistence. No layer skips boundaries:
-   - Router NEVER imports `app.repositories.*` or `app.integrations.*`.
+   - Router NEVER imports `app.repositories.*`, `app.integrations.*`, or `app.workers.*`.
    - Service NEVER imports `fastapi.*`, `Request`, `Response`, or raises `HTTPException`.
    - Repository NEVER calls another repository or commits transactions (services own UoW).
    - Integrations NEVER import services or repositories.
-2. **Dependency Injection at every seam.** Every external collaborator is a `Protocol` injected via constructor or FastAPI `Depends`. No hidden globals, no `from app.X import singleton`.
+2. **Dependency Injection at every seam.** Every external collaborator is a `Protocol` injected via constructor or FastAPI `Depends`. No hidden globals, no `from app.X import singleton`. Every dependency is test-overridable; no `lru_cache` on request-scoped dependencies such as sessions.
 3. **Async all the way down.** No `requests`, no sync DB, no blocking I/O on the request path.
 4. **Type-annotate everything.** mypy strict; no untyped defs, no implicit `Optional`. Use modern syntax: `X | None` (not `Optional[X]`), `list[X]` (not `List[X]`).
 5. **Pydantic v2 only.** `model_config = ConfigDict(extra="forbid")` on request/response schemas. Never return raw ORM objects from a route.
@@ -51,7 +51,7 @@ These are review-rejecting violations:
 | A domain event | `domain-events.mdc` | Past-tense event name, immutable, dispatched **after** UoW commit. |
 | Email | `email-integration.mdc`, `i18n-l10n.mdc` | Use `EmailSender` Protocol with `locale` kwarg, per-locale Jinja2 templates under `app/templates/email/<id>/<locale>/`, tests use `NullEmailSender` or MailHog. |
 | A migration | `alembic-migrations.mdc` | Backward-compatible only, naming-convention metadata applied, `downgrade()` implemented for staging. |
-| A test | `testing.mdc`, `test-factories-seeders.mdc` | Use factories/seeders; never inline literal data; never target dev DB; never assert on translated copy — assert on `error.code` / structured fields. |
+| A test | `testing-pytest.mdc`, `test-factories-seeders.mdc` | Use factories/seeders; never inline literal data; never target dev DB; never assert on translated copy — assert on `error.code` / structured fields. |
 | Docker / compose / render | `docker.mdc`, `deployment-render.mdc` | Multi-stage build, non-root user, `SERVICE_ROLE` selects entrypoint, `pybabel compile` runs in builder stage. |
 | `Makefile` / `scripts/setup_env.sh` | `dx-makefile.mdc` | `make setup ENV=…` must remain the single entry. |
 | A user-visible string anywhere | `i18n-l10n.mdc` | Wrap with `_("key")`, run `make i18n-extract && make i18n-update`, translate `messages.po` for `en` **and** `ar`, run `make i18n-compile`, run `make i18n-check`. Use `/new-translation` slash command to follow the full workflow. |
@@ -59,6 +59,8 @@ These are review-rejecting violations:
 ## 4. Workflow expectations
 
 - **Plan before editing.** For any non-trivial change, list the files you intend to touch and the layer each belongs to. Confirm the change does not violate Section 2.
+- **Use the narrowest relevant guidance.** Start with this file, then read only the matching `.cursor/rules/*.mdc` files for the paths you will touch. Open the full spec when the change crosses layers, changes locked stack/deploy rules, or the local rule is silent.
+- **Quick self-audit:** run `/check-architecture` while iterating; run `/review-code` and `/review-security` before opening a PR.
 - **Update migrations + tests in the same PR** as the model change.
 - **Update `.env.example`** when you add a new setting; CI will fail otherwise.
 - **Update an ADR** (`docs/architecture-decisions/NNNN-title.md`) for any irreversible decision.
@@ -77,7 +79,7 @@ These are review-rejecting violations:
 - If the change is user-visible, the OpenAPI diff is reviewed **and** every new user-visible string has entries in `messages.po` for both `en` and `ar`. `make i18n-check` passes.
 - If the change touches deploy, the runbook is updated.
 - **`/review-code` returns `APPROVE` or `COMMENT` (no blockers, no required-change majors).**
-- **`/review-security` returns `APPROVE` (no findings above LOW).** Any CRITICAL or §20 escalation trigger blocks merge until remediated.
+- **`/review-security` returns `APPROVE` (no findings above LOW).** Any CRITICAL or `security-review.mdc` §20 escalation trigger blocks merge until remediated.
 
 ## 6. When you're unsure
 

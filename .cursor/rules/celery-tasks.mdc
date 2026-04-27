@@ -1,10 +1,10 @@
 ---
-description: Celery 5.6+ task patterns — naming, idempotency, primitive args, DLQ, signals, retries.
+description: Celery 5.6.3+ task patterns — naming, idempotency, primitive args, DLQ, signals, retries.
 globs: app/workers/**/*.py
 alwaysApply: false
 ---
 
-# Celery Tasks (5.6+)
+# Celery Tasks (5.6.3+)
 
 ## Hard rules
 

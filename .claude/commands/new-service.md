@@ -25,7 +25,7 @@ Add a new feature end-to-end while respecting the layered architecture and DI ru
    - `app/services/<aggregate>_service.py` taking repo + cache + events + clock via constructor.
    - Public methods are use-case names (not CRUD verbs).
    - Raises `DomainError` subclasses from `app/core/exceptions.py`. `DomainError.message` is a **gettext key** (e.g. `"errors.invoice.already_paid"`), not English text. Translation happens at the handler boundary.
-   - **Never** branches on locale and **never** hardcodes user-visible strings. If a notification is sent, accept `locale` as a method parameter (or read from request context) and forward to `EmailSender.send_template(locale=...)` / `EventPublisher.publish(..., locale=...)`.
+   - **Never** branches on locale and **never** hardcodes user-visible strings. If a notification is sent, take the already-resolved locale as an explicit primitive argument from the router/listener and forward it to `EmailSender.send_template(locale=...)` / `EventPublisher.publish(..., locale=...)`; never read request context inside the service.
 4. **DI wiring**
    - `app/core/container.py` adds `get_<aggregate>_repo`, `get_<aggregate>_service` factories using FastAPI `Depends`.
 5. **Router (only if endpoints are needed)**

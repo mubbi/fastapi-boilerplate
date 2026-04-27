@@ -68,10 +68,11 @@ def get_current_locale(request: Request) -> str:
 ```python
 # In a router
 async def list_widgets(
-    locale: Annotated[str, Depends(get_current_locale)],
+    _locale: Annotated[str, Depends(get_current_locale)],
     svc: Annotated[WidgetService, Depends(get_widget_service)],
 ) -> WidgetListResponse:
-    return WidgetListResponse.model_validate(await svc.list(locale=locale))
+    # Locale is available at the boundary for headers / rendering; the service stays locale-agnostic.
+    return WidgetListResponse.model_validate(await svc.list())
 ```
 
 ## Translation catalogs (gettext)
@@ -238,7 +239,7 @@ All fields appear in `.env.example` under the `# --- i18n / l10n ---` section.
 - `.po` files are committed; PRs include `.po` diffs reviewed like code.
 - Production never recompiles catalogs from request data — catalogs are immutable per build.
 - Monitor: `i18n_missing_key_total{locale,key}` counter; alert when sustained.
-- Translations submitted by non-engineers go through a review PR (templated PR description in `docs/translations.md`).
+- Translations submitted by non-engineers go through a review PR using the repository PR template / team translation process.
 
 ## Anti-patterns (review-rejecting)
 

@@ -24,7 +24,7 @@ Start **only** the isolated test infrastructure and execute the test suite.
    docker compose -f docker-compose.test.yml down -v
    ```
 
-## Hard guarantees (architecture spec §15.3)
+## Hard guarantees (architecture spec §15.2 and §15.4)
 
 - Tests use `DATABASE_URL_TEST` and `REDIS_URL_TEST` **only**.
 - `conftest.py` asserts the DB URL matches a `_test` allowlist; misconfig fails fast before any schema change.

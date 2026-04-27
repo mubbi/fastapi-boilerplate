@@ -8,7 +8,7 @@ alwaysApply: false
 
 Three signals: **logs** (structlog), **metrics** (Prometheus), **traces** (OpenTelemetry). Sentry on top for error tracking.
 
-## Metrics — prometheus-client (0.25+)
+## Metrics — prometheus-client (0.25.0+)
 
 ### Required metrics
 
@@ -67,7 +67,7 @@ Three signals: **logs** (structlog), **metrics** (Prometheus), **traces** (OpenT
 - Failed Celery tasks captured automatically.
 - Tie to OTel via Sentry's W3C trace context support so spans + errors link.
 
-## Health endpoints (spec §12.5)
+## Health endpoints (spec §13.5)
 
 - `/health` — process is alive (always 200).
 - `/ready` — checks all required deps in parallel (DB `SELECT 1`, Redis `PING`, registered integrations) with 1s timeouts. Cached 5–10s.

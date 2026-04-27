@@ -1,10 +1,10 @@
 ---
-description: Pydantic v2 (2.13+) idioms — schemas, settings, validators, performance.
+description: Pydantic 2.13.3+ idioms — schemas, settings, validators, performance.
 globs: app/schemas/**/*.py,app/core/config.py,app/events/types.py
 alwaysApply: false
 ---
 
-# Pydantic v2 (2.13+)
+# Pydantic v2 (2.13.3+)
 
 ## Hard rules
 

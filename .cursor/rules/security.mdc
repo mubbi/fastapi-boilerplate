@@ -62,7 +62,7 @@ alwaysApply: false
 
 - Env vars only; never logged. Logger redactor masks `*_KEY`, `*_SECRET`, `password`, `token`, `authorization`.
 - Use `SecretStr` in settings. Read with `.get_secret_value()` only at the moment of use.
-- Rotate on any suspicion of leak. Runbook in `docs/runbooks/rotate-secret.md`.
+- Rotate on any suspicion of leak. Keep the rotation runbook under `docs/runbooks/` per spec §18.5.
 
 ## SQL & mass-assignment
 

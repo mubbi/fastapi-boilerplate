@@ -22,7 +22,7 @@ The subagent will pick up the diff scope automatically from `git diff`, but you 
 /review-code                            # review staged + unstaged changes vs origin/main
 /review-code HEAD~3..HEAD               # review last 3 commits
 /review-code app/services/invoice_service.py app/api/v1/invoices.py  # review specific files
-/review-code PR-123                     # if a PR number is supplied (resolved via gh)
+/review-code PR-123                     # optional; requires GitHub CLI if PR lookup is used
 ```
 
 ## Rubric (mirrors `.cursor/rules/code-review.mdc`)

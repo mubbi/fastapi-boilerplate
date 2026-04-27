@@ -13,16 +13,16 @@ Stack: **aiosmtplib** + **Jinja2** templates, behind an `EmailSender` Protocol.
 ```python
 # app/integrations/email/base.py
 from typing import Protocol
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 class EmailMessage(BaseModel):
     to: list[EmailStr]
     subject: str
     text_body: str | None = None
     html_body: str | None = None
-    cc: list[EmailStr] = []
-    bcc: list[EmailStr] = []
-    headers: dict[str, str] = {}
+    cc: list[EmailStr] = Field(default_factory=list)
+    bcc: list[EmailStr] = Field(default_factory=list)
+    headers: dict[str, str] = Field(default_factory=dict)
 
 class EmailSender(Protocol):
     async def send(self, message: EmailMessage) -> None: ...
@@ -31,7 +31,7 @@ class EmailSender(Protocol):
         template_id: str,
         *,
         to: list[str],
-        context: dict,
+        context: dict[str, object],
         locale: str | None = None,   # resolves to LOCALE_DEFAULT if None
     ) -> None: ...
     async def health(self) -> bool: ...
@@ -86,7 +86,7 @@ Locale is **not** part of the domain event (events are facts). The publisher pas
 # Service: don't await the send; enqueue the event with a separate locale kwarg.
 await self._events.publish(
     UserRegistered(occurred_at=now, aggregate_id=user.id, email=user.email),
-    locale=user.preferred_locale or request_locale,
+    locale=resolved_locale,
 )
 
 # Listener task: actually send.

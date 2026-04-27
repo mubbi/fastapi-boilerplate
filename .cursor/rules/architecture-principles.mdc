@@ -17,9 +17,9 @@ Router (app/api/**)  →  Service (app/services/**)  →  Repository (app/reposi
 
 **Hard import rules — review-rejecting:**
 
-- Router NEVER imports `app.repositories.*` or `app.integrations.*`.
+- Router NEVER imports `app.repositories.*`, `app.integrations.*`, or `app.workers.*`.
 - Service NEVER imports `fastapi.*`, `Request`, `Response`, or raises `HTTPException`.
-- Repository NEVER calls `.commit()`, NEVER imports another repository.
+- Repository NEVER calls `.commit()` and never calls another repository; cross-aggregate orchestration belongs in services.
 - Integration NEVER imports services or repositories.
 - User-visible strings are NEVER hardcoded — they go through `Translator` / `_("key")`. See `i18n-l10n.mdc`.
 - Locale lives at the **rendering boundary** (router / listener / template), never in domain/business logic. No `if locale == "ar":` in services.

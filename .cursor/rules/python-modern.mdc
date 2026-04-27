@@ -1,10 +1,10 @@
 ---
-description: Python 3.14+ idioms, modern typing, async-only, no legacy patterns.
-globs: **/*.py
+description: Python 3.14.4+ idioms, modern typing, async-only, no legacy patterns.
+globs: app/**/*.py,tests/**/*.py,alembic/**/*.py
 alwaysApply: false
 ---
 
-# Python 3.14+ Idioms
+# Python 3.14.4+ Idioms
 
 Target: Python **3.14.4+**. mypy strict. No legacy syntax.
 

@@ -1,10 +1,10 @@
 ---
-description: structlog 25.5+ — JSON logs to stdout, request_id propagation, secret redaction.
+description: structlog 25.5.0+ — JSON logs to stdout, request_id propagation, secret redaction.
 globs: app/core/logging.py,app/**/*.py
 alwaysApply: false
 ---
 
-# Logging — structlog (25.5+)
+# Logging — structlog (25.5.0+)
 
 JSON to stdout. One log = one line. No `print`, no stdlib logging directly from app code (configure it once to forward into structlog).
 

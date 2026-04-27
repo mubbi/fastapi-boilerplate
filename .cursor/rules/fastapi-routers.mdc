@@ -1,16 +1,16 @@
 ---
-description: FastAPI 0.136+ router patterns. HTTP-only layer; thin handlers calling a single service method.
+description: FastAPI 0.136.1+ router patterns. HTTP-only layer; thin handlers calling a single service method.
 globs: app/api/**/*.py
 alwaysApply: false
 ---
 
 # FastAPI Routers
 
-Target: FastAPI **0.136+**.
+Target: FastAPI **0.136.1+**.
 
 ## Hard rules
 
-- ❌ NEVER import `app.repositories.*` or `app.integrations.*` from a router.
+- ❌ NEVER import `app.repositories.*`, `app.integrations.*`, or `app.workers.*` from a router.
 - ❌ NEVER raise `HTTPException` — raise a `DomainError` from the service; the global handler maps it.
 - ❌ NEVER include business logic in a handler. Validate input, call **one** service method, return.
 - ❌ NEVER touch `request.state` for app-state mutation; use it only for read-only correlation (`request_id`, `locale`).

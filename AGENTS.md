@@ -4,6 +4,8 @@ This file is the agent-tool–neutral mirror of [`CLAUDE.md`](CLAUDE.md). Cursor
 
 For the full guidance, **read [`CLAUDE.md`](CLAUDE.md)**. For file-scoped, version-specific rules, see [`.cursor/rules/*.mdc`](.cursor/rules) — they apply automatically based on globs in their frontmatter.
 
+For efficient AI work: start with `CLAUDE.md`, then read only the `.cursor/rules/*.mdc` files matching the paths you will touch. Use the full architecture spec when changing cross-cutting behavior, locked stack/deploy choices, or anything the local rules do not cover.
+
 ## Quick links
 
 - **Architecture spec (authoritative):** [`docs/tech-architecture-requirements.md`](docs/tech-architecture-requirements.md)
@@ -16,7 +18,7 @@ For the full guidance, **read [`CLAUDE.md`](CLAUDE.md)**. For file-scoped, versi
 
 ## Review before merge
 
-Two independent reviewers gate every PR:
+Two independent AI review passes run before every PR; branch protection still requires at least one human approval per spec §16:
 
 - **Code review** — architecture, DI, Pydantic v2, SQLAlchemy 2.0+ async, modern typing, i18n, testing, code quality.
   Rubric: [`.cursor/rules/code-review.mdc`](.cursor/rules/code-review.mdc) · Subagent: [`.claude/agents/code-reviewer.md`](.claude/agents/code-reviewer.md) · Slash command: `/review-code`
@@ -53,8 +55,10 @@ The `/new-translation` Claude Code slash command walks through this workflow whe
 
 **Do**
 - Follow the layered architecture and DI hard rules in [`CLAUDE.md`](CLAUDE.md) §2.
+- Keep routers out of repositories, integrations, and workers; services out of FastAPI; repositories out of transaction commits and cross-repository orchestration.
 - Add/update tests, factories, and migrations in the same PR as the change.
 - Use modern Python typing (`X | None`, `list[X]`, `Annotated[...]`).
+- Keep every FastAPI dependency override-friendly for tests; never cache request-scoped dependencies with `lru_cache`.
 - Wrap scheduled task bodies in a Redis distributed lock (Beat-singleton-agnostic).
 - Use `EmailSender` Protocol; never call SMTP libraries directly from services. `EmailSender.send_template` takes a `locale` kwarg; templates live under `app/templates/email/<id>/<locale>/`.
 - Wrap **every** user-visible string with `_("key")` / `Translator.gettext`. Translate `messages.po` for both `en` and `ar` in the same PR.

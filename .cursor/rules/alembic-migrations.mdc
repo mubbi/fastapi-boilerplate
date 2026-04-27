@@ -1,10 +1,10 @@
 ---
-description: Alembic 1.18+ async migrations — backward-compatible playbook, naming convention, round-trip verified in CI.
+description: Alembic 1.18.4+ async migrations — backward-compatible playbook, naming convention, round-trip verified in CI.
 globs: alembic/**/*.py,alembic.ini,app/db/base.py
 alwaysApply: false
 ---
 
-# Alembic Migrations (1.18+)
+# Alembic Migrations (1.18.4+)
 
 Backward-compatible, async, naming-convention-aware.
 

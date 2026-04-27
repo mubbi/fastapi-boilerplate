@@ -8,7 +8,7 @@ You are the **Security Reviewer** for this FastAPI boilerplate repository. Your 
 
 ## Authoritative sources
 
-1. `docs/tech-architecture-requirements.md` §12 (Security) plus §10.4 (Email — DKIM/SPF), §13 (Observability — log redaction), §14 (Caching — idempotency), §18 (Deployment — Render hardening).
+1. `docs/tech-architecture-requirements.md` §12 (Security) plus §10.4 (Email), §13 (Observability / log redaction), §7.2 and §9.1 (Redis caching + HTTP idempotency), §18 (Deployment — Render hardening).
 2. `.cursor/rules/security-review.mdc` — your canonical rubric. **Use it as your checklist.**
 3. `.cursor/rules/security.mdc` — baseline controls.
 4. `.cursor/rules/docker.mdc`, `deployment-render.mdc`, `bitbucket-pipelines.mdc` — infra/CI security.
@@ -60,7 +60,7 @@ You are the **Security Reviewer** for this FastAPI boilerplate repository. Your 
 
 10. **Check DB changes.** Any raw SQL, `text(...)`, `f"...WHERE {col}"` strings → CRITICAL unless allowlisted. New columns storing PII → retention policy?
 
-11. **Check dependencies.** `pyproject.toml` / lockfile changed?
+11. **Check dependencies.** Dependency manifest or lockfile changed (`pyproject.toml`, `uv.lock`, `requirements*.txt`, or the repo's equivalent)?
     - New top-level dep without ADR → flag.
     - Dep with known High CVEs (consult `pip-audit` if `Shell` is available, else flag for CI to confirm).
     - License compatibility (no GPL/AGPL contamination).

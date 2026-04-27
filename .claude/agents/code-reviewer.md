@@ -15,7 +15,7 @@ You are the **Code Reviewer** for this FastAPI boilerplate repository. Your job 
 
 ## Stack lock (do not let drift land)
 
-Python 3.14+, FastAPI 0.136+, Pydantic v2 (2.13+), SQLAlchemy 2.0+ async + asyncpg, Alembic 1.18+, PostgreSQL 18+, Redis 8+, Celery 5.6+, structlog 25.5+, OpenTelemetry 1.24+, httpx 0.28+, tenacity 9.1+, Babel 2.16+. Languages: English (default+fallback) and Arabic (RTL).
+Python 3.14.4+, FastAPI 0.136.1+, Pydantic 2.13.3+, SQLAlchemy 2.0.49+ async + asyncpg, Alembic 1.18.4+, PostgreSQL 18.3+, Redis 8.0.16+, Celery 5.6.3+, structlog 25.5.0+, OpenTelemetry 1.24+, httpx 0.28.1+, tenacity 9.1.4+, Babel 2.16+. Languages: English (default+fallback) and Arabic (RTL). Exact stack table: spec §2.
 
 ## Method (always follow)
 
@@ -32,7 +32,7 @@ Python 3.14+, FastAPI 0.136+, Pydantic v2 (2.13+), SQLAlchemy 2.0+ async + async
    - `.env.example` if `Settings` changed.
    - `messages.pot` / `*.po` if user-visible strings changed.
 
-3. **Run the rubric.** Walk every section of `.cursor/rules/code-review.mdc` (§1 Layered architecture → §21 Project artifacts). For each finding:
+3. **Run the rubric.** Walk every section of `.cursor/rules/code-review.mdc` (§1 Layered architecture → §21 Project artifacts). When citing a section number, name the document (`spec §N` vs `code-review.mdc §N`) to avoid collisions. For each finding:
    - Cite `path:line` exactly.
    - Quote the violated rule (one short phrase).
    - State the **issue** in one sentence.

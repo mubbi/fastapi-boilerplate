@@ -16,10 +16,10 @@ The boilerplate ships **English (`en`, default + fallback)** and **Arabic (`ar`,
 
 | You're adding… | Treat as |
 |---|---|
-| New `DomainError` (e.g. `InvoiceAlreadyPaid`) | `code` is locale-independent (`errors.invoice.already_paid`); `message` is the **gettext key** (e.g. `"errors.invoice.already_paid"`). |
+| New `DomainError` (e.g. `InvoiceAlreadyPaid`) | `code` is locale-independent (`INVOICE_ALREADY_PAID`); `message` is the **gettext key/source** (e.g. `"errors.invoice.already_paid"` or `"Invoice %(invoice_id)s is already paid"`). |
 | Pydantic `Field(description=...)` for OpenAPI | **Not** translated — `description=` is documentation, not user-visible UI text. |
 | Pydantic validator that raises a user-facing message | Raise `DomainError` (or convert at the handler) — never inline English in the schema. |
-| Email subject / body | Lives in per-locale Jinja2 template under `app/templates/email/<id>/<locale>/{subject.txt,body.html,body.txt}`. **Not** in `messages.po`. |
+| Email subject / body | Lives in per-locale Jinja2 template under `app/templates/email/<id>/<locale>/{subject.j2,html.j2,txt.j2}`. Shared snippets inside templates may still use `_(...)` and be extracted to `messages.po`. |
 | Log field that surfaces in a UI dashboard | Translate the **rendered** string at the boundary, log the gettext key in structured logs. |
 | Internal log message / engineering metric | **Do not translate.** English-only is fine for operator-facing text. |
 
@@ -135,7 +135,7 @@ async def test_invoice_already_paid_returns_localized_message(client, lang):
     )
     assert resp.status_code == 409
     body = resp.json()
-    assert body["error"]["code"] == "errors.invoice.already_paid"
+    assert body["error"]["code"] == "INVOICE_ALREADY_PAID"
     assert resp.headers["content-language"] == lang
     assert body["error"]["message"]   # non-empty; do not assert exact copy
 ```
@@ -149,9 +149,9 @@ async def test_welcome_email_renders_per_locale(email_sender_fake, locale):
     sent = email_sender_fake.last_sent
     assert sent.locale == locale
     assert sent.template_id == "welcome"
-    # assert structural keys (e.g. dir attribute) — not translated copy
-    if locale == "ar":
-        assert 'dir="rtl"' in sent.html_body
+    # Assert structural locale behavior, not translated copy.
+    expected_dir = {"en": "ltr", "ar": "rtl"}[locale]
+    assert f'dir="{expected_dir}"' in sent.html_body
 ```
 
 ## 5. Commit checklist

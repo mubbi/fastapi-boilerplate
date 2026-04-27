@@ -13,10 +13,10 @@ Single source of truth for "what blocks merge to main".
 1. **Lint & format** — `ruff check`, `ruff format --check`, `black --check`.
 2. **Typecheck** — `mypy app` (strict).
 3. **Security scans** — `pip-audit`, `bandit -q -r app`, `detect-secrets scan`.
-4. **Unit tests** — `pytest -m unit`. No services required.
-5. **Integration + API tests** — start `docker-compose.test.yml`, run `pytest -m "integration or api"`. Tear down.
+4. **PR tests** — start `docker-compose.test.yml`, run `pytest -m "not slow"` against the isolated test stack, and tear down.
+5. **Main full suite** — on `main`, run the full test suite including slow/smoke jobs as configured.
 6. **Migration round-trip** — fresh Postgres, `alembic upgrade head`, `alembic downgrade -1`, `alembic upgrade head`. Both directions must succeed.
-7. **Drift checks** — `make check-env` (every Settings field has a matching `.env.example` entry); `make openapi` diff is reviewed.
+7. **Drift checks** — test DB URL isolation guard, `make check-env` (every Settings field has a matching `.env.example` entry), and `make openapi` diff review.
 8. **i18n hygiene** — `make i18n-check`: `messages.pot` is in sync with sources, every catalog compiles, translation completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` for every locale in `LOCALES_ENABLED`. See `i18n-l10n.mdc`.
 9. **Build image** — multi-stage Docker build (catalogs compiled in builder stage), push to registry tagged `<repo>:<git-sha>`.
 10. **Deploy gate** — only on `main`: trigger Render deploy hook (or rely on Render `autoDeploy: true`).
@@ -60,18 +60,14 @@ pipelines:
               - uv run bandit -q -r app
               - uv run detect-secrets scan --baseline .secrets.baseline
     - step:
-        name: Tests (unit)
-        script:
-          - pip install uv && uv sync --frozen
-          - uv run pytest -m unit -q
-    - step:
-        name: Tests (integration + api)
+        name: Tests (not slow)
         services: [postgres-test, redis-test]
         script:
           - pip install uv && uv sync --frozen
           - cp .env.test .env
+          - test "${DATABASE_URL:-}" != "${DATABASE_URL_PRODUCTION:-}"  # fail closed on DB URL mixups
           - uv run alembic upgrade head
-          - uv run pytest -m "integration or api" -q
+          - uv run pytest -m "not slow" -q
     - step:
         name: Migration round-trip
         services: [postgres-test]
@@ -81,13 +77,13 @@ pipelines:
           - uv run alembic downgrade -1
           - uv run alembic upgrade head
     - step:
-        name: i18n catalog hygiene
+        name: Drift and i18n hygiene
         script:
           - pip install uv && uv sync --frozen
-          - uv run pybabel extract -F babel.cfg -o /tmp/messages.pot app/
-          - diff -q /tmp/messages.pot app/locales/messages.pot   # fail on drift
-          - uv run pybabel compile -d app/locales/
-          - uv run python scripts/check_i18n_completeness.py     # asserts ≥ LOCALE_TRANSLATION_COMPLETENESS_MIN
+          - make check-env
+          - make openapi
+          - git diff --exit-code openapi.json
+          - make i18n-check
     - step:
         name: Build image
         services: [docker]

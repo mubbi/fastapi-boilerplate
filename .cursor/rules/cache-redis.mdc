@@ -1,10 +1,10 @@
 ---
-description: Redis 8+ caching — CacheClient Protocol, key conventions, TTL discipline, idempotency, distributed locks.
+description: Redis 8.0.16+ caching — CacheClient Protocol, key conventions, TTL discipline, idempotency, distributed locks.
 globs: app/integrations/cache/**/*.py,app/services/**/*.py,app/api/deps.py
 alwaysApply: false
 ---
 
-# Cache & Redis (8+)
+# Cache & Redis (8.0.16+)
 
 ## Hard rules
 

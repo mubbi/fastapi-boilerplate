@@ -44,7 +44,7 @@ alwaysApply: false
 - `Content-Language` — resolved locale (BCP-47), echoed on every response that may contain user-visible text. See `i18n-l10n.mdc`.
 - Security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security` (prod), `Content-Security-Policy` (strict on `/docs`).
 
-## Locale negotiation
+## Locale negotiation (see `i18n-l10n.mdc` and spec §11)
 
 - Clients send `Accept-Language: ar, en;q=0.9` and / or `?lang=ar`. Server resolves the locale (priority in `i18n-l10n.mdc`), echoes `Content-Language`.
 - `error.message` is **translated** to the resolved locale; `error.code` is **always** locale-independent. Clients programmatic-match on `code`.

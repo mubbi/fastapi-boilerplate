@@ -113,10 +113,10 @@ async def client(app) -> AsyncIterator[httpx.AsyncClient]:
   ```
 - **Email tests:** assert subject + body + `dir=` attribute per locale (`dir="rtl"` for `ar`, `dir="ltr"` for `en`).
 - **Catalog hygiene** (CI gate `make i18n-check`):
-  - `messages.pot` is in sync with the source (`pybabel extract` produces no diff).
+  - `messages.pot` is in sync with the source.
   - Every key in `messages.pot` exists in every catalog.
   - Translation completeness ≥ `LOCALE_TRANSLATION_COMPLETENESS_MIN` per locale.
-  - All catalogs compile (`pybabel compile`).
+  - All catalogs compile.
 
 ## Coverage gates (CI)
 
