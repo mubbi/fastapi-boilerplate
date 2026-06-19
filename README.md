@@ -113,7 +113,7 @@ Hook **templates** in **`docker/.githooks/`** invoke **`make git-hooks-commit`**
 ## Deploy
 
 - **Render.com:** [`render.yaml`](render.yaml). Three services share one image; `SERVICE_ROLE` selects the entrypoint (`web` / `worker` / `beat`). Beat runs as exactly one replica. Migrations run in a pre-deploy job on the platform, not in ad-hoc shells.
-- **CI:** [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) and a mirrored [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — both run quality gates and tests via `docker compose … run dev`, then build + scan the production image on `main`. The GitHub workflow caches Docker layers via the Actions cache and triggers Render through the `RENDER_DEPLOY_HOOK_URL` secret.
+- **CI:** [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) and a mirrored [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — both run quality gates and tests via `docker compose … run dev`, then build + scan the production image on `main` (the GitHub workflow also caches Docker layers via the Actions cache). The Render deploy step is a **no-op stub** in the boilerplate — set `RENDER_DEPLOY_HOOK_URL` and uncomment the deploy command to enable real deploys per project.
 
 ## Documentation
 

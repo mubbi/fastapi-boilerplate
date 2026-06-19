@@ -39,5 +39,9 @@ COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --all-extras --no-install-project
 
+# Trust the bind-mounted repo regardless of host file ownership (CI runners mount
+# the checkout owned by a different uid) so `git ls-files` works for the secret scan.
+RUN git config --system --add safe.directory '*'
+
 # Default command is a hint; compose always passes an explicit command.
 CMD ["bash", "-c", "echo 'Use: docker compose -f docker-compose.test.yml run --rm dev <tool>' && exit 1"]

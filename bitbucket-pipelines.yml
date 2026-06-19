@@ -20,7 +20,7 @@ definitions:
         caches: [docker]
         script:
           - docker compose -f docker-compose.test.yml build dev
-          - docker compose -f docker-compose.test.yml run --rm --no-deps dev sh -ec 'pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline'
+          - docker compose -f docker-compose.test.yml run --rm --no-deps dev sh -ec 'pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline $(git ls-files)'
 
     - step: &i18n-check
         name: Translation completeness
@@ -71,7 +71,10 @@ definitions:
     - step: &render-deploy
         name: Trigger Render deploy
         script:
-          - 'curl -fsSL -X POST "$RENDER_DEPLOY_HOOK_URL"'
+          # Render deploy is disabled in the boilerplate. To enable per project, set the
+          # RENDER_DEPLOY_HOOK_URL repository variable and uncomment the curl below.
+          # - 'curl -fsSL -X POST "$RENDER_DEPLOY_HOOK_URL"'
+          - echo "[deploy] Render deploy disabled in boilerplate — set RENDER_DEPLOY_HOOK_URL to enable."
 
 pipelines:
   default:

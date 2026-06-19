@@ -198,9 +198,11 @@ test-down: ## Tear down the test infra
 openapi: ## Write openapi.json (from mounted tree)
 	$(DEV0) python scripts/dump_openapi.py > openapi.json
 
+# detect-secrets scans only git-tracked files ($$(git ls-files)) — never .git/ or the
+# tool caches, which are huge and pathologically slow to walk over a bind mount.
 .PHONY: audit
 audit: ## Run pip-audit, bandit, and detect-secrets (part of ci-local / git-hooks-push)
-	$(DEV0) sh -ec 'pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline'
+	$(DEV0) sh -ec 'pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline $$(git ls-files)'
 
 # PR gates: same tools as bitbucket-pipelines.yml (sequential; CI runs lint/security/i18n/check-env in parallel).
 .PHONY: ci-local
