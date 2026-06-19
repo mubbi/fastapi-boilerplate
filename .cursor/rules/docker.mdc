@@ -68,7 +68,7 @@ esac
 
 ## docker-compose.yml (dev)
 
-- Services: `api`, `worker`, `beat`, `postgres`, `redis`, `mailhog`.
+- Services: `api`, `worker`, `beat`, `postgres`, `redis`, `mailpit`.
 - All app services use the **same** image; differ only by `SERVICE_ROLE`.
 - Use named volumes for `postgres_data`, `redis_data`.
 - Healthchecks on `postgres` (`pg_isready`) and `redis` (`redis-cli ping`); app services `depends_on: { condition: service_healthy }`.
@@ -76,7 +76,7 @@ esac
 
 ## docker-compose.test.yml (isolation)
 
-- Services: `postgres_test` (port 55432), `redis_test` (port 56379), `mailhog_test`, **`dev`** (toolchain).
+- Services: `postgres_test` (port 55432), `redis_test` (port 56379), `mailpit_test`, **`dev`** (toolchain).
 - Pytest, Alembic in CI, ruff, mypy, Babel, and drift scripts run **inside `dev`** with Compose network URLs (`postgres_test`, `redis_test`). **Do not** document host `pytest` as the supported path.
 - Named volume `postgres_test_data` for Postgres data (ephemeral when using `make test-down` / `down -v`).
 - Tests run via `make test` or `docker compose -f docker-compose.test.yml run --rm dev pytest …`. CI uses the same Compose file.

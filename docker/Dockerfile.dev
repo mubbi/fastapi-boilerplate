@@ -1,17 +1,27 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.9
 # ──────────────────────────────────────────────────────────────────
 # Dev / CI tool image: locked runtime + dev dependencies (pytest, ruff, mypy, …).
 # Used via `docker compose -f docker-compose.test.yml run --rm dev <cmd>`.
-# Source is bind-mounted at /workspace — do not bake app code into this layer.
+#
+# Source is bind-mounted at /workspace at run time — deps live in /opt/venv
+# (outside the mount) so the bind mount can never shadow the installed tools.
 # ──────────────────────────────────────────────────────────────────
 ARG PYTHON_VERSION=3.14-slim-bookworm
+ARG UV_VERSION=0.11.8
+
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 FROM python:${PYTHON_VERSION}
 
+COPY --from=uv /uv /usr/local/bin/uv
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
     PYTHONPATH=/workspace
 
 RUN apt-get update \
@@ -24,11 +34,10 @@ RUN apt-get update \
 
 WORKDIR /workspace
 
+# Locked runtime + dev deps into /opt/venv (on PATH); cached until the lock changes.
 COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --all-extras --no-install-project
 
-RUN pip install --upgrade pip wheel uv \
-    && uv export --frozen --all-extras --no-emit-workspace -o /tmp/requirements.txt \
-    && pip install -r /tmp/requirements.txt
-
-# Default command is a no-op; compose always passes a command.
-CMD ["bash", "-c", "echo 'Use: docker compose … run --rm dev <tool>' && exit 1"]
+# Default command is a hint; compose always passes an explicit command.
+CMD ["bash", "-c", "echo 'Use: docker compose -f docker-compose.test.yml run --rm dev <tool>' && exit 1"]

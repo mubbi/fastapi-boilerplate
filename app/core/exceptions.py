@@ -140,7 +140,11 @@ def _request_id_of(request: Request) -> str:
 
 
 def _locale_of(request: Request) -> str:
-    return getattr(request.state, "locale", "en")
+    locale = getattr(request.state, "locale", None)
+    if locale:
+        return str(locale)
+    settings = getattr(request.app.state, "settings", None)
+    return getattr(settings, "locale_default", "en")
 
 
 def _translator_of(request: Request) -> Any:
@@ -157,8 +161,12 @@ def _translator_of(request: Request) -> Any:
 # ── Handlers ─────────────────────────────────────────────────────
 
 
-async def _domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Map ``DomainError`` subclasses to the canonical envelope, with translation."""
+async def domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map ``DomainError`` subclasses to the canonical envelope, with translation.
+
+    Public so other handlers (e.g. the rate limiter) can reuse the single source
+    of envelope truth instead of re-building it.
+    """
     if not isinstance(exc, DomainError):  # defensive
         return await _unhandled_handler(request, exc)
 
@@ -205,10 +213,14 @@ async def _validation_error_handler(request: Request, exc: Exception) -> JSONRes
 
     locale = _locale_of(request)
     translator = _translator_of(request)
+    # Expose Pydantic's stable, locale-independent error *type* per field
+    # (e.g. "missing", "string_too_short") rather than its English prose, so the
+    # envelope never carries an untranslated user-visible string. Clients key on
+    # the type; the top-level message is translated.
     fields = {}
     for err in exc.errors():
         loc = ".".join(str(part) for part in err.get("loc", ()) if part != "body")
-        fields[loc or "<root>"] = err.get("msg", "invalid")
+        fields[loc or "<root>"] = err.get("type", "invalid")
     request_id = _request_id_of(request)
     envelope = _build_envelope(
         code="VALIDATION_ERROR",
@@ -268,7 +280,7 @@ async def _unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Wire all error handlers onto the FastAPI app."""
-    app.add_exception_handler(DomainError, _domain_error_handler)
+    app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(Exception, _unhandled_handler)

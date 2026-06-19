@@ -74,7 +74,15 @@ def decode_token(token: str, *, settings: Settings) -> dict[str, Any]:
             algorithms=[settings.jwt_algorithm],
             audience=settings.jwt_audience,
             issuer=settings.app_name,
-            options={"require_exp": True, "require_iat": True, "require_nbf": True},
+            options={
+                "require_exp": True,
+                "require_iat": True,
+                "require_nbf": True,
+                # Reject tokens that omit the audience/issuer we bind on, not just
+                # tokens that carry the wrong ones.
+                "require_aud": True,
+                "require_iss": True,
+            },
         )
     except JWTError as exc:
         raise UnauthorizedError(message="auth.invalid_token") from exc

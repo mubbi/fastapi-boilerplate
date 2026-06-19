@@ -2,7 +2,7 @@
 # Single-entrypoint developer experience. Tooling uses Docker only
 # (locked dev image: docker/Dockerfile.dev + docker-compose.test.yml `dev` service).
 #
-#   make setup ENV=local       # full dev stack (api, worker, beat, postgres, redis, mailhog)
+#   make setup ENV=local       # full dev stack (api, worker, beat, postgres, redis, mailpit)
 #   make setup ENV=test        # isolated test infra (see also: make test)
 #   make setup ENV=production  # entrypoint hint for Render
 #
@@ -183,7 +183,7 @@ logs: ## Tail logs from the local stack
 
 .PHONY: test-up
 test-up: ## Up isolated test DB/redis/mail (tests use make test / dev container)
-	$(COMPOSE_TEST) up -d postgres_test redis_test mailhog_test
+	$(COMPOSE_TEST) up -d postgres_test redis_test mailpit_test
 	@echo "Waiting for postgres_test..."
 	@until docker exec fb_postgres_test pg_isready -U app_test -d app_test >/dev/null 2>&1; do sleep 1; done
 	@echo "Test infra ready."

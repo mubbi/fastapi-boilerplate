@@ -1,5 +1,5 @@
 ---
-description: Bootstrap the full local development stack (API, workers, Beat, Postgres, Redis, MailHog).
+description: Bootstrap the full local development stack (API, workers, Beat, Postgres, Redis, Mailpit).
 ---
 
 # /setup-local
@@ -23,7 +23,7 @@ Run the unified DX entrypoint for **local development**.
 ## What this does (per the architecture spec §17.3)
 
 - Copies `.env.example` → `.env` if missing.
-- Builds images, brings up `postgres`, `redis`, `mailhog` first.
+- Builds images, brings up `postgres`, `redis`, `mailpit` first.
 - Runs `alembic upgrade head` **via the `api` container** against the dev DB.
 - Compiled `.mo` files come from the image build and Babel; use `make i18n-compile` in the `dev` container if you need to refresh catalogs from `.po` files on disk.
 - Optionally seeds via `scripts/seed_dev_data.py`.

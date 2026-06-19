@@ -19,7 +19,7 @@ case "${ENV}" in
       sleep 1
     done
     docker compose -f docker-compose.yml exec api alembic upgrade head
-    echo "[setup] Local stack is up. API: http://localhost:8000  MailHog: http://localhost:8025"
+    echo "[setup] Local stack is up. API: http://localhost:8000  Mailpit: http://localhost:8025"
     bash "${SCRIPT_DIR}/install_git_hooks.sh"
     ;;
 

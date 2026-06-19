@@ -4,12 +4,36 @@ name: fastapi-boilerplate
 # Local development stack.
 # Use `make setup ENV=local` (preferred) or `docker compose up`.
 # Test stack lives in `docker-compose.test.yml` — never share state.
+#
+# Hardening: every service sets `no-new-privileges`; the app services
+# (built from docker/Dockerfile, non-root) also drop all Linux capabilities.
 # ──────────────────────────────────────────────────────────────────
+
+x-app-build: &app-build
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: fastapi-boilerplate:local
+
+x-app-env: &app-env
+  APP_ENV: local
+  DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+
+x-app-security: &app-security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
 
 services:
   postgres:
     image: postgres:18-alpine
     container_name: fb_postgres
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: app_db
       POSTGRES_USER: app
@@ -29,6 +53,8 @@ services:
   redis:
     image: redis:8-alpine
     container_name: fb_redis
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "6379:6379"
     healthcheck:
@@ -37,27 +63,25 @@ services:
       timeout: 3s
       retries: 12
 
-  mailhog:
-    image: mailhog/mailhog:v1.0.1
-    container_name: fb_mailhog
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: fb_mailpit
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
 
   api:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:local
+    <<: [*app-build, *app-security]
     container_name: fb_api
     environment:
+      <<: *app-env
       SERVICE_ROLE: web
-      APP_ENV: local
-      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      SMTP_HOST: mailhog
+      SMTP_HOST: mailpit
       SMTP_PORT: "1025"
     depends_on:
       postgres:
@@ -71,18 +95,11 @@ services:
       - ./alembic:/app/alembic
 
   worker:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:local
+    <<: [*app-build, *app-security]
     container_name: fb_worker
     environment:
+      <<: *app-env
       SERVICE_ROLE: worker
-      APP_ENV: local
-      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       api:
         condition: service_started
@@ -90,18 +107,11 @@ services:
         condition: service_healthy
 
   beat:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: fastapi-boilerplate:local
+    <<: [*app-build, *app-security]
     container_name: fb_beat
     environment:
+      <<: *app-env
       SERVICE_ROLE: beat
-      APP_ENV: local
-      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app_db
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       api:
         condition: service_started

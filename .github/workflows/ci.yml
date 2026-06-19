@@ -1,0 +1,144 @@
+# GitHub Actions mirror of bitbucket-pipelines.yml.
+# Same philosophy: every quality gate and test runs INSIDE the locked dev image
+# (docker/Dockerfile.dev + the `dev` compose service) — no host pip/venv installs.
+# Docker layers are cached across runs via the GitHub Actions cache backend.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege; deploy reads a secret only.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMPOSE_TEST: docker compose -f docker-compose.test.yml
+
+jobs:
+  # ── Quality gates (parallel, mirrors the Bitbucket `parallel:` block) ──
+  quality:
+    name: ${{ matrix.gate.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        gate:
+          - name: Lint + format + types
+            cmd: ruff check app tests && black --check app tests && mypy app
+          - name: Security scans
+            cmd: pip-audit --strict && bandit -q -r app && detect-secrets scan --baseline .secrets.baseline
+          - name: Translation completeness
+            cmd: python scripts/i18n_check.py
+          - name: Settings / .env.example drift
+            cmd: python scripts/check_env.py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.dev
+          tags: fastapi-boilerplate:dev
+          load: true
+          cache-from: type=gha,scope=dev
+          cache-to: type=gha,mode=max,scope=dev
+      - name: Run gate
+        env:
+          GATE_CMD: ${{ matrix.gate.cmd }}
+        run: $COMPOSE_TEST run --rm --no-deps dev sh -ec "$GATE_CMD"
+
+  # ── Tests + migration round-trip (runs against the isolated test stack) ──
+  tests:
+    name: Tests + migration round-trip
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [quality]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.dev
+          tags: fastapi-boilerplate:dev
+          load: true
+          cache-from: type=gha,scope=dev
+          cache-to: type=gha,mode=max,scope=dev
+      - name: Start test infra
+        run: |
+          $COMPOSE_TEST up -d postgres_test redis_test mailpit_test
+          until docker exec fb_postgres_test pg_isready -U app_test -d app_test >/dev/null 2>&1; do
+            sleep 1
+          done
+      - name: Migrate round-trip + pytest
+        run: |
+          $COMPOSE_TEST run --rm dev sh -ec '
+            alembic upgrade head
+            alembic downgrade -1
+            alembic upgrade head
+            pytest --cov=app --cov-report=xml --cov-report=term-missing
+          '
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: $COMPOSE_TEST down -v
+
+  # ── Production image + vulnerability scan (main only) ──
+  build-image:
+    name: Build production image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          tags: fastapi-boilerplate:${{ github.sha }}
+          load: true
+          build-args: |
+            APP_REVISION=${{ github.sha }}
+            APP_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=prod
+          cache-to: type=gha,mode=max,scope=prod
+      - name: Trivy scan (fail on HIGH/CRITICAL)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+            fastapi-boilerplate:${{ github.sha }}
+
+  # ── Trigger Render deploy (main only) ──
+  deploy:
+    name: Trigger Render deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build-image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl -fsSL -X POST "$RENDER_DEPLOY_HOOK_URL"

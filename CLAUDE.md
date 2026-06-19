@@ -49,7 +49,7 @@ These are review-rejecting violations:
 | A Celery task in `app/workers/tasks/*` | `celery-tasks.mdc`, `celery-beat.mdc`, `domain-events.mdc` | Primitive args (IDs only), idempotent, named `context.action`. |
 | A scheduled task | `celery-beat.mdc` | Add to `beat_schedule.py`, wrap body in distributed Redis lock. |
 | A domain event | `domain-events.mdc` | Past-tense event name, immutable, dispatched **after** UoW commit. |
-| Email | `email-integration.mdc`, `i18n-l10n.mdc` | Use `EmailSender` Protocol with `locale` kwarg, per-locale Jinja2 templates under `app/templates/email/<id>/<locale>/`, tests use `NullEmailSender` or MailHog. |
+| Email | `email-integration.mdc`, `i18n-l10n.mdc` | Use `EmailSender` Protocol with `locale` kwarg, per-locale Jinja2 templates under `app/templates/email/<id>/<locale>/`, tests use `NullEmailSender` or Mailpit. |
 | A migration | `alembic-migrations.mdc` | Backward-compatible only, naming-convention metadata applied, `downgrade()` implemented for staging. |
 | A test | `testing-pytest.mdc`, `test-factories-seeders.mdc` | Use factories/seeders; never inline literal data; never target dev DB; never assert on translated copy — assert on `error.code` / structured fields. |
 | Docker / compose / render | `docker.mdc`, `deployment-render.mdc` | Multi-stage build, non-root user, `SERVICE_ROLE` selects entrypoint, `pybabel compile` runs in builder stage. |

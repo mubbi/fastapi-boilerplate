@@ -6,10 +6,12 @@ chase API versions.
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import APIRouter, Request, Response, status
 
 from app.api.deps import SettingsDep, SystemServiceDep
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.metrics import render_metrics
 from app.schemas.system import HealthResponse, ReadyCheck, ReadyResponse
 
@@ -60,10 +62,15 @@ async def ready(svc: SystemServiceDep, response: Response) -> ReadyResponse:
     include_in_schema=False,
 )
 async def metrics(request: Request, settings: SettingsDep) -> Response:
+    # When metrics collection is disabled the endpoint must not exist — returning
+    # 404 avoids leaking process internals through an unauthenticated route.
+    if not settings.prometheus_enabled:
+        raise NotFoundError()
     expected = settings.metrics_endpoint_auth_token.get_secret_value()
     if expected:
         presented = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        if presented != expected:
+        # Constant-time comparison to avoid a token-recovery timing oracle (CWE-208).
+        if not hmac.compare_digest(presented, expected):
             raise ForbiddenError(message="errors.metrics.forbidden")
     body, content_type = render_metrics()
     return Response(content=body, media_type=content_type)

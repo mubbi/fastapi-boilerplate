@@ -88,6 +88,7 @@ async def container(settings) -> AsyncIterator[Container]:
     from app.integrations.cache.in_memory import InMemoryCache
     from app.integrations.email import build_email_sender
     from app.integrations.http import build_http_client
+    from tests.fakes.events import RecordingEventPublisher
 
     translator = BabelTranslator(settings=settings)
     cache = InMemoryCache()
@@ -105,6 +106,7 @@ async def container(settings) -> AsyncIterator[Container]:
         cache=cache,
         email=email,
         http=http,
+        events=RecordingEventPublisher(),
     )
     try:
         yield c

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+    from app.events.publisher import EventPublisher
     from app.integrations.cache.base import CacheClient
     from app.integrations.email.base import EmailSender
     from app.integrations.http.base import HttpClient
@@ -47,6 +48,7 @@ class Container:
     cache: CacheClient
     email: EmailSender
     http: HttpClient
+    events: EventPublisher
 
     async def aclose(self) -> None:
         """Dispose long-lived resources in reverse construction order."""
@@ -62,6 +64,7 @@ class Container:
 async def build_container(settings: Settings) -> Container:
     """Construct the live container. Called once at app startup."""
     from app.db.session import build_engine, build_sessionmaker
+    from app.events import build_event_publisher
     from app.integrations.cache import build_cache_client
     from app.integrations.email import build_email_sender
     from app.integrations.http import build_http_client
@@ -73,6 +76,7 @@ async def build_container(settings: Settings) -> Container:
     cache = await build_cache_client(settings)
     email = await build_email_sender(settings, translator=translator)
     http = await build_http_client(settings)
+    events = build_event_publisher(settings)
 
     return Container(
         settings=settings,
@@ -83,6 +87,7 @@ async def build_container(settings: Settings) -> Container:
         cache=cache,
         email=email,
         http=http,
+        events=events,
     )
 
 
@@ -122,6 +127,10 @@ def get_http_client(container: ContainerDependency) -> HttpClient:
     return container.http
 
 
+def get_event_publisher(container: ContainerDependency) -> EventPublisher:
+    return container.events
+
+
 async def get_db_session(
     container: ContainerDependency,
 ) -> AsyncIterator[AsyncSession]:
@@ -147,6 +156,7 @@ __all__ = [
     "get_container",
     "get_db_session",
     "get_email_sender",
+    "get_event_publisher",
     "get_http_client",
     "get_translator",
     "settings_dependency",

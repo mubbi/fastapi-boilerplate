@@ -508,7 +508,7 @@ EMAIL_ENABLED=false
 EMAIL_FROM_ADDRESS=noreply@example.com
 EMAIL_FROM_NAME=FastAPI Boilerplate
 # SMTP (aiosmtplib)
-SMTP_HOST=mailhog
+SMTP_HOST=mailpit
 SMTP_PORT=1025
 SMTP_USER=
 SMTP_PASSWORD=

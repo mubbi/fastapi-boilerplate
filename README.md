@@ -8,18 +8,18 @@ Production-grade FastAPI backend boilerplate with a strict layered architecture,
 
 ## What you get
 
-- **API layer**: FastAPI 0.115+ with strict Pydantic v2 schemas, structured exception envelope, OpenAPI docs.
+- **API layer**: FastAPI 0.136+ with strict Pydantic v2 schemas, structured exception envelope, OpenAPI docs.
 - **Service layer**: business logic only; collaborators arrive via `Protocol` + DI.
-- **Repository layer**: SQLAlchemy 2.0+ async (`asyncpg`), Alembic migrations, Postgres 16+.
-- **Caching / locking**: Redis 7+, connection pool, distributed lock with safe-DEL Lua.
-- **Background jobs**: Celery 5.4+ with Redis broker, multi-Beat-safe scheduled tasks.
+- **Repository layer**: SQLAlchemy 2.0+ async (`asyncpg`), Alembic migrations, Postgres 18+.
+- **Caching / locking**: Redis 8+, connection pool, distributed lock with safe-DEL Lua.
+- **Background jobs**: Celery 5.6+ with Redis broker, multi-Beat-safe scheduled tasks.
 - **HTTP client**: shared `httpx.AsyncClient` with `tenacity` retries.
-- **Email**: per-locale Jinja2 templates, async SMTP (MailHog locally), `NullEmailSender` for tests.
+- **Email**: per-locale Jinja2 templates, async SMTP (Mailpit locally), `NullEmailSender` for tests.
 - **Internationalisation**: Babel + gettext catalogs; English (default + fallback) and Arabic (RTL) ship enabled.
 - **Observability**: structlog JSON logs (with redaction + OTel trace correlation), Prometheus metrics, OpenTelemetry tracing, optional Sentry.
 - **Security**: bcrypt passwords, JWT helpers, rate limiting (slowapi), CORS, trusted hosts, security headers.
 - **DX:** `make setup ENV=…` for every environment; **all** lint, typecheck, tests, i18n, and security checks run in **Docker** (locked `uv.lock` + `docker/Dockerfile.dev`). Bitbucket Pipelines uses the same pattern—no `pip install` on the runner.
-- **Deploy:** multi-stage [`docker/Dockerfile`](docker/Dockerfile) (non-root runtime), [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) (Docker-based CI), [Render.com](https://render.com) blueprint in [`render.yaml`](render.yaml).
+- **Deploy:** multi-stage [`docker/Dockerfile`](docker/Dockerfile) (non-root runtime); Docker-based CI on either [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) or [`.github/workflows/ci.yml`](.github/workflows/ci.yml); [Render.com](https://render.com) blueprint in [`render.yaml`](render.yaml).
 
 ## Prerequisites
 
@@ -32,14 +32,14 @@ Production-grade FastAPI backend boilerplate with a strict layered architecture,
 ## Quick start
 
 ```bash
-# 1) Full dev stack: Postgres, Redis, MailHog, API, worker, Beat
+# 1) Full dev stack: Postgres, Redis, Mailpit, API, worker, Beat
 #    (also copies docker/.githooks → .git/hooks via install_git_hooks.sh)
 make setup ENV=local
 
 # 2) Open the app
-open http://localhost:8000/docs    # Swagger
+open http://localhost:8000/docs    # Swagger (disabled in production)
 open http://localhost:8000/health    # Liveness
-open http://localhost:8025           # MailHog UI
+open http://localhost:8025           # Mailpit UI
 ```
 
 **Run tests (isolated test DB + dev tool image):**
@@ -113,7 +113,7 @@ Hook **templates** in **`docker/.githooks/`** invoke **`make git-hooks-commit`**
 ## Deploy
 
 - **Render.com:** [`render.yaml`](render.yaml). Three services share one image; `SERVICE_ROLE` selects the entrypoint (`web` / `worker` / `beat`). Beat runs as exactly one replica. Migrations run in a pre-deploy job on the platform, not in ad-hoc shells.
-- **CI:** [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) — `docker compose … run dev` for quality gates and tests; production image build for release.
+- **CI:** [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml) and a mirrored [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — both run quality gates and tests via `docker compose … run dev`, then build + scan the production image on `main`. The GitHub workflow caches Docker layers via the Actions cache and triggers Render through the `RENDER_DEPLOY_HOOK_URL` secret.
 
 ## Documentation
 

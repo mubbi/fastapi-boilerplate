@@ -14,8 +14,8 @@ alwaysApply: false
 
 | `ENV` | Brings up | Runs migrations | Seeds | Applies to |
 |---|---|---|---|---|
-| `local` | full dev stack (api, worker, beat, postgres, redis, mailhog) via `docker-compose.yml` | yes (`docker compose exec api alembic …` / `setup_env.sh`) | optional (`scripts/seed_dev_data.py`) | developer machines |
-| `test` | isolated test infra (postgres_test, redis_test, mailhog) via `docker-compose.test.yml` | via `make test` / CI **inside** the `dev` container | no — tests use factories/seeders | local & CI |
+| `local` | full dev stack (api, worker, beat, postgres, redis, mailpit) via `docker-compose.yml` | yes (`docker compose exec api alembic …` / `setup_env.sh`) | optional (`scripts/seed_dev_data.py`) | developer machines |
+| `test` | isolated test infra (postgres_test, redis_test, mailpit_test) via `docker-compose.test.yml` | via `make test` / CI **inside** the `dev` container | no — tests use factories/seeders | local & CI |
 | `production` (with `SERVICE_ROLE=web|worker|beat`) | nothing (managed services on Render) | only pre-deploy / job (platform) | no | container entrypoint on Render |
 
 ## Hard rules

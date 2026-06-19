@@ -73,11 +73,13 @@ class SMTPEmailSender:
                 subject_len=len(message.subject),
             )
         except Exception as exc:
+            # Log the upstream detail server-side only. It must NOT enter the
+            # error envelope: SMTP exceptions can carry hostnames, relay banners,
+            # recipient addresses, or auth text (CWE-209 information exposure).
             log.error("email.send_failed", error=str(exc))
             raise ExternalServiceError(
                 code="EMAIL_SEND_FAILED",
                 message="errors.email.send_failed",
-                details={"reason": str(exc)},
             ) from exc
 
     def _build_mime(self, message: EmailMessage) -> MIMEMessage:

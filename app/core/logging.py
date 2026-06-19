@@ -18,20 +18,53 @@ from app.core.constants import AUDIT_LOGGER_NAME
 
 SENSITIVE_KEY_FRAGMENTS: tuple[str, ...] = (
     "password",
+    "passwd",
     "token",
     "authorization",
+    "bearer",
     "api_key",
+    "apikey",
+    "x-api-key",
     "secret",
+    "private_key",
+    "credential",
     "cookie",
+    "set-cookie",
+    "session",
 )
+
+_REDACTION_MAX_DEPTH = 6
+_REDACTED = "***"
+
+
+def _is_sensitive_key(key: object) -> bool:
+    lowered = str(key).lower()
+    return any(fragment in lowered for fragment in SENSITIVE_KEY_FRAGMENTS)
+
+
+def _redact_value(value: object, depth: int = 0) -> object:
+    """Recursively mask sensitive keys inside nested mappings / sequences."""
+    if depth >= _REDACTION_MAX_DEPTH:
+        return value
+    if isinstance(value, dict):
+        return {
+            k: (_REDACTED if _is_sensitive_key(k) else _redact_value(v, depth + 1))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_value(v, depth + 1) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_value(v, depth + 1) for v in value)
+    return value
 
 
 def _redact_processor(_: object, __: str, event_dict: EventDict) -> EventDict:
-    """Mask values whose key contains a sensitive fragment."""
+    """Mask values whose key contains a sensitive fragment, recursing into nested data."""
     for key in list(event_dict.keys()):
-        lowered = key.lower()
-        if any(fragment in lowered for fragment in SENSITIVE_KEY_FRAGMENTS):
-            event_dict[key] = "***"
+        if _is_sensitive_key(key):
+            event_dict[key] = _REDACTED
+        else:
+            event_dict[key] = _redact_value(event_dict[key])
     return event_dict
 
 

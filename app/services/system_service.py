@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from app.core.constants import (
     READY_CHECK_CACHE_TTL_SECONDS,
@@ -49,6 +49,11 @@ class ReadinessReport:
 class SystemService:
     """Composes liveness + readiness."""
 
+    # Readiness is cached process-wide (not per instance): a fresh SystemService is
+    # built per request, so an instance-scoped cache would never hit. Sharing it on
+    # the class lets the short TTL absorb high-frequency probe traffic (spec §13.4).
+    _readiness_cache: ClassVar[tuple[float, ReadinessReport] | None] = None
+
     def __init__(
         self,
         *,
@@ -61,7 +66,6 @@ class SystemService:
         self._session_factory = session_factory
         self._app_version = app_version
         self._app_env = app_env
-        self._cached: tuple[float, ReadinessReport] | None = None
 
     def health(self) -> dict[str, str]:
         """Process-up signal — must NEVER touch a dependency."""
@@ -77,14 +81,15 @@ class SystemService:
         Cached briefly to absorb high-frequency Kubernetes / Render probe traffic.
         """
         now = time.monotonic()
-        if self._cached and (now - self._cached[0]) < READY_CHECK_CACHE_TTL_SECONDS:
-            return self._cached[1]
+        cached = SystemService._readiness_cache
+        if cached and (now - cached[0]) < READY_CHECK_CACHE_TTL_SECONDS:
+            return cached[1]
 
         db = await self._check_db()
         redis = await self._check_redis()
         ready = db.healthy and redis.healthy
         report = ReadinessReport(ready=ready, checks=(db, redis))
-        self._cached = (now, report)
+        SystemService._readiness_cache = (now, report)
         if not ready:
             log.warning("ready.unhealthy", db=db.healthy, redis=redis.healthy)
         return report

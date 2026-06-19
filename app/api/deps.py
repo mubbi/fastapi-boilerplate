@@ -17,6 +17,7 @@ from app.core.container import (
     get_container,
     get_db_session,
     get_email_sender,
+    get_event_publisher,
     get_http_client,
     get_translator,
     settings_dependency,
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from app.core.clock import Clock
     from app.core.config import Settings
     from app.core.i18n import Translator
+    from app.events.publisher import EventPublisher
     from app.integrations.cache.base import CacheClient
     from app.integrations.email.base import EmailSender
     from app.integrations.http.base import HttpClient
@@ -43,6 +45,7 @@ TranslatorDep = Annotated["Translator", Depends(get_translator)]
 CacheDep = Annotated["CacheClient", Depends(get_cache)]
 EmailDep = Annotated["EmailSender", Depends(get_email_sender)]
 HttpDep = Annotated["HttpClient", Depends(get_http_client)]
+EventPublisherDep = Annotated["EventPublisher", Depends(get_event_publisher)]
 DbSessionDep = Annotated["AsyncSession", Depends(get_db_session)]
 
 
@@ -66,8 +69,12 @@ SystemServiceDep = Annotated[SystemService, Depends(get_system_service)]
 
 
 def get_current_locale(request: Request) -> str:
-    """Return the locale set by :class:`LocaleMiddleware`."""
-    return getattr(request.state, "locale", "en")
+    """Return the locale set by :class:`LocaleMiddleware`, else the configured default."""
+    locale = getattr(request.state, "locale", None)
+    if locale:
+        return str(locale)
+    settings = getattr(request.app.state, "settings", None)
+    return getattr(settings, "locale_default", "en")
 
 
 CurrentLocaleDep = Annotated[str, Depends(get_current_locale)]

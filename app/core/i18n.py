@@ -87,18 +87,26 @@ class BabelTranslator:
         self._fallback = settings.locale_fallback
         self._enabled = set(settings.locales_enabled)
         self._rtl = set(settings.rtl_locales)
+        # Per-instance catalog cache. Instance-scoped (not @lru_cache on the method,
+        # which would pin every translator instance in a process-global cache).
+        self._catalogs: dict[str, Translations] = {}
 
-    @lru_cache(maxsize=16)
     def _translations(self, locale: str) -> Translations:
-        """Cache one ``Translations`` per locale; loaded once per process."""
+        """Load + cache one ``Translations`` per locale (once per instance)."""
+        cached = self._catalogs.get(locale)
+        if cached is not None:
+            return cached
         if not self._dir.exists():
-            return Translations()
-        loaded = Translations.load(
-            dirname=str(self._dir),
-            locales=[locale, self._fallback],
-            domain=self._domain,
-        )
-        return loaded if isinstance(loaded, Translations) else Translations()
+            loaded: Translations = Translations()
+        else:
+            result = Translations.load(
+                dirname=str(self._dir),
+                locales=[locale, self._fallback],
+                domain=self._domain,
+            )
+            loaded = result if isinstance(result, Translations) else Translations()
+        self._catalogs[locale] = loaded
+        return loaded
 
     def _resolve(self, locale: str | None) -> str:
         if locale and locale in self._enabled:

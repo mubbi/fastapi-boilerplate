@@ -42,7 +42,7 @@ definitions:
         caches: [docker]
         script:
           - docker compose -f docker-compose.test.yml build dev
-          - docker compose -f docker-compose.test.yml up -d postgres_test redis_test mailhog_test
+          - docker compose -f docker-compose.test.yml up -d postgres_test redis_test mailpit_test
           - until docker exec fb_postgres_test pg_isready -U app_test -d app_test >/dev/null 2>&1; do sleep 1; done
           - |
             docker compose -f docker-compose.test.yml run --rm dev sh -ec '
@@ -59,7 +59,13 @@ definitions:
         size: 2x
         caches: [docker]
         script:
-          - docker build -t fastapi-boilerplate:$BITBUCKET_COMMIT -f docker/Dockerfile .
+          - export DOCKER_BUILDKIT=1
+          - >-
+            docker build
+            --build-arg APP_REVISION=$BITBUCKET_COMMIT
+            --build-arg APP_VERSION=${BITBUCKET_TAG:-$BITBUCKET_COMMIT}
+            -f docker/Dockerfile
+            -t fastapi-boilerplate:$BITBUCKET_COMMIT .
           - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL fastapi-boilerplate:$BITBUCKET_COMMIT
 
     - step: &render-deploy

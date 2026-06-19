@@ -8,8 +8,7 @@ Spec §6.2 / §10. Hard rules:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 
@@ -35,15 +34,18 @@ class CacheClient(Protocol):
 
     async def ping(self) -> bool: ...
 
-    @asynccontextmanager
     def lock(
         self,
         key: str,
         *,
         ttl_seconds: int,
         blocking_timeout: float | None = None,
-    ) -> AsyncIterator[bool]:
-        """Distributed lock. ``yield True`` if acquired, ``False`` otherwise."""
+    ) -> AbstractAsyncContextManager[bool]:
+        """Distributed lock context manager. Enters ``True`` if acquired, else ``False``.
+
+        Implementations return an async context manager (e.g. via
+        ``@asynccontextmanager``); the structural return type is checked here.
+        """
         ...
 
     async def aclose(self) -> None: ...

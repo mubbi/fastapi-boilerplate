@@ -49,21 +49,19 @@ def register_rate_limiter(app: FastAPI, limiter: Limiter) -> None:
 
     async def _handler(request: Request, exc: Exception) -> JSONResponse:
         from app.core.constants import HEADER_RETRY_AFTER
+        from app.core.exceptions import RateLimitedError, domain_error_handler
 
         if not isinstance(exc, RateLimitExceeded):
             raise exc
-        retry_after = getattr(exc, "retry_after", None)
-        headers = {HEADER_RETRY_AFTER: str(int(retry_after))} if retry_after else {}
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": {
-                    "code": "RATE_LIMITED",
-                    "message": "errors.rate_limited",
-                    "details": {},
-                }
-            },
-            headers=headers,
+        # Delegate to the canonical domain handler so the 429 carries the same
+        # translated envelope (request_id, timestamp, Content-Language) as every
+        # other error, then layer the Retry-After hint on top.
+        response = await domain_error_handler(
+            request, RateLimitedError(message="errors.rate_limited")
         )
+        retry_after = getattr(exc, "retry_after", None)
+        if retry_after:
+            response.headers[HEADER_RETRY_AFTER] = str(int(retry_after))
+        return response
 
     app.add_exception_handler(RateLimitExceeded, _handler)

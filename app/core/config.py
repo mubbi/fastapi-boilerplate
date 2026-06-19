@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
-        extra="ignore",
+        extra="forbid",
         case_sensitive=False,
     )
 
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     email_provider: Literal["smtp", "null"] = "smtp"
     email_from_address: str = "no-reply@example.com"
     email_from_name: str = "FastAPI Boilerplate"
-    smtp_host: str = "mailhog"
+    smtp_host: str = "mailpit"
     smtp_port: int = 1025
     smtp_user: str = ""
     smtp_password: SecretStr = SecretStr("")
@@ -193,10 +193,19 @@ class Settings(BaseSettings):
             return []
         return value
 
-    @field_validator("locale_default")
-    @classmethod
-    def _default_locale_is_enabled(cls, v: str, info: object) -> str:
-        return v
+    @model_validator(mode="after")
+    def _validate_locale_consistency(self) -> Settings:
+        """The default and fallback locales must be in the enabled set (fail fast)."""
+        enabled = set(self.locales_enabled)
+        if self.locale_default not in enabled:
+            raise ValueError(
+                f"LOCALE_DEFAULT={self.locale_default!r} is not in LOCALES_ENABLED={self.locales_enabled}"
+            )
+        if self.locale_fallback not in enabled:
+            raise ValueError(
+                f"LOCALE_FALLBACK={self.locale_fallback!r} is not in LOCALES_ENABLED={self.locales_enabled}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> Settings:
@@ -217,6 +226,11 @@ class Settings(BaseSettings):
             raise ValueError("APP_DEBUG must be false in production")
         if "*" in self.app_trusted_hosts:
             raise ValueError("APP_TRUSTED_HOSTS must be pinned in production")
+        if self.app_cors_allow_credentials and "*" in self.app_cors_origins:
+            raise ValueError(
+                "APP_CORS_ORIGINS must not contain '*' when "
+                "APP_CORS_ALLOW_CREDENTIALS is true in production"
+            )
         if (
             self.service_role == "web"
             and self.prometheus_enabled
@@ -237,9 +251,14 @@ class Settings(BaseSettings):
 
     @property
     def docs_enabled(self) -> bool:
-        """Docs are auto-disabled in production unless explicitly enabled."""
+        """Effective docs toggle: always off in production (defense in depth).
+
+        ``APP_DOCS_ENABLED`` governs non-production environments. Production never
+        exposes ``/docs``, ``/redoc``, or ``/openapi.json`` regardless of the flag;
+        a project that genuinely needs production docs overrides this property.
+        """
         if self.is_production:
-            return self.app_docs_enabled
+            return False
         return self.app_docs_enabled
 
     @property
@@ -254,6 +273,3 @@ def get_settings() -> Settings:
     Tests reset via ``get_settings.cache_clear()``.
     """
     return Settings()
-
-
-SettingsDep = Annotated[Settings, "Settings dependency annotation"]  # documentation only

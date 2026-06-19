@@ -30,8 +30,8 @@ Cursor users: open the rubrics and prompt `@code-review` / `@security-review` (C
 ## Single entry for environments
 
 ```bash
-make setup ENV=local        # full dev stack (api, worker, beat, postgres, redis, mailhog)
-make setup ENV=test         # isolated test stack (postgres_test, redis_test, mailhog) only
+make setup ENV=local        # full dev stack (api, worker, beat, postgres, redis, mailpit)
+make setup ENV=test         # isolated test stack (postgres_test, redis_test, mailpit_test) only
 make setup ENV=production SERVICE_ROLE=web|worker|beat   # used by the container entrypoint on Render
 ```
 

@@ -52,14 +52,10 @@ render.yaml
 # Dev-only Docker recipe (builder uses docker/Dockerfile; keep entrypoint + healthcheck)
 docker/Dockerfile.dev
 
-# Compose & env (secrets must not enter context; examples not required at runtime)
+# Compose & env (no env file belongs in the image — secrets or otherwise)
 docker-compose*.yml
 docker-compose.override.*
-.env
-.env.local
-.env.production
-.env.*.local
-.env.test
+.env*
 openapi.json
 
 # Markdown: keep root README for builder stage (COPY pyproject.toml uv.lock README.md)

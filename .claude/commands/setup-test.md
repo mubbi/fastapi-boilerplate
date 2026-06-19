@@ -1,5 +1,5 @@
 ---
-description: Bring up the isolated test stack (postgres_test, redis_test, mailhog) and run pytest in Docker.
+description: Bring up the isolated test stack (postgres_test, redis_test, mailpit_test) and run pytest in Docker.
 ---
 
 # /setup-test

@@ -12,17 +12,23 @@ from typing import Any
 
 from celery import Task
 
+from app.core.exceptions import ExternalServiceError, TimeoutError
 from app.core.logging import get_logger
 from app.workers.celery_app import celery_app
 
 log = get_logger(__name__)
+
+# Retry only on transient/upstream failures. Programming errors (KeyError,
+# validation bugs, …) must fail fast and route to the DLQ rather than replay.
+# Domain code extends this tuple with its own retryable exceptions.
+RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (ExternalServiceError, TimeoutError)
 
 
 @celery_app.task(
     name="system.handle_ping_emitted",
     bind=True,
     acks_late=True,
-    autoretry_for=(Exception,),
+    autoretry_for=RETRYABLE_EXCEPTIONS,
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
